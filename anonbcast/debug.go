@@ -7,7 +7,10 @@ import (
 
 // Debugging
 // TODO: make this into an environment variable or something
-const Debug = false
+const Debug = true
+
+// EnableDump may cause race conditions!!
+const EnableDump = false
 
 func DPrintf(format string, a ...interface{}) {
 	log.SetFlags(log.Lmicroseconds)

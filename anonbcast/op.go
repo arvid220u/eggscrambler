@@ -2,16 +2,16 @@ package anonbcast
 
 import "github.com/google/uuid"
 
-type OpType int
+type OpType string
 
 const (
-	PublicKeyOpType OpType = iota
-	StartOpType
-	MessageOpType
-	ScrambledOpType
-	DecryptedOpType
-	RevealOpType
-	AbortOpType
+	PublicKeyOpType OpType = "publicKey"
+	StartOpType     OpType = "start"
+	MessageOpType   OpType = "message"
+	ScrambledOpType OpType = "scrambled"
+	DecryptedOpType OpType = "decrypted"
+	RevealOpType    OpType = "reveal"
+	AbortOpType     OpType = "abort"
 )
 
 // Op represents an operation to be applied to the state machine. The
@@ -48,6 +48,7 @@ func (op StartOp) Type() OpType {
 
 // MessageOp submits a message that has been encrypted once with each participant's public key.
 // If Round is not equal to the current round, or the current phase isn't EncryptPhase, it is a no-op.
+// If a participant with the given Id does not exist, it is a no-op (and logs a warning, because it should never happen with a legal client).
 // If a message for this user has already been submitted, it is overwritten.
 // If this is the last participant to submit a message, the state machine will transition to the ScramblePhase.
 type MessageOp struct {
@@ -62,6 +63,7 @@ func (op MessageOp) Type() OpType {
 
 // ScrambledOp announces that a participant has scrambled all messages.
 // If Round is not equal to the current round, or the current phase isn't ScramblePhase, it is a no-op.
+// If a participant with the given Id does not exist, it is a no-op (and logs a warning, because it should never happen with a legal client).
 // If Prev is not the previous number of participants who have scrambled, it is a no-op.
 // If this participant has already scrambled, it is a no-op.
 // If this is the last participant to scramble, the state machine will transition to the DecryptPhase.
@@ -80,6 +82,7 @@ func (op ScrambledOp) Type() OpType {
 
 // DecryptedOp announces that a participant has decrypted all messages.
 // If Round is not equal to current round, or the current phase isn't DecryptPhase, it is a no-op.
+// If a participant with the given Id does not exist, it is a no-op (and logs a warning, because it should never happen with a legal client).
 // If Prev is not the previous number of participants who have decrypted, it is a no-op.
 // If this participant has already decrypted, it is a no-op.
 // If this is the last participant to decrypt, the state machine will transition to the RevealPhase.
@@ -98,6 +101,7 @@ func (op DecryptedOp) Type() OpType {
 
 // RevealOp is reveals a participant's reveal key pair.
 // If Round is not equal to the current round, or the current phase isn't RevealPhase, it is a no-op.
+// If a participant with the given Id does not exist, it is a no-op (and logs a warning, because it should never happen with a legal client).
 // If a reveal key pair for this participant has already been submitted, it is overwritten.
 // If this is the last participant to submit a reveal key pair, the state machine will transition to the DonePhase,
 // as well as increment its current round.
@@ -115,7 +119,6 @@ func (op RevealOp) Type() OpType {
 // If Round is not equal to the current round, it is a no-op.
 // The state machine will transition to the FailedPhase, and increment its current round.
 type AbortOp struct {
-	Id    uuid.UUID
 	Round int
 }
 
