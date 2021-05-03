@@ -1,28 +1,44 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/arvid220u/6.824-project/anonbcast"
 	"github.com/arvid220u/6.824-project/labrpc"
 	"github.com/arvid220u/6.824-project/mockraft"
 	"github.com/arvid220u/6.824-project/raft"
+	"log"
+	"os"
+	"strings"
+	"sync"
 	"time"
 )
 
-type ConfessionsGenerator int
+type ConfessionsGenerator struct {
+	id string
+	mu *sync.Mutex
+}
 
 func (cg ConfessionsGenerator) Message(round int) string {
-	return fmt.Sprintf("this is a confession in round %d", round)
+	cg.mu.Lock()
+	defer cg.mu.Unlock()
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("Message to send in round %d, client %s: ", round, cg.id)
+	msg, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatalf("err: %v", err)
+	}
+	msg = strings.TrimSuffix(msg, "\n")
+	return msg
 }
 
 // TODO: extract the confessions app into its own package, and create a very simple
 // 	main package that starts the confessions app.
 func main() {
-	println("welcome to the fully anonymous MIT confessions!")
+	fmt.Println("welcome to the fully anonymous MIT confessions!")
 	applyCh := make(chan raft.ApplyMsg)
 	rf := mockraft.New(applyCh)
 	s := anonbcast.NewServer(rf)
-	var cg ConfessionsGenerator
 
 	net := labrpc.MakeNetwork()
 	defer net.Cleanup()
@@ -34,26 +50,41 @@ func main() {
 	net.Connect("client", "server")
 	net.Enable("client", true)
 
-	c := anonbcast.NewClient(s, cg, end)
+	results := make(chan anonbcast.RoundResult)
 
-	fmt.Printf("client: %v, server: %v\n", c, s)
+	var mu sync.Mutex
+	cg1 := ConfessionsGenerator{
+		id: "1",
+		mu: &mu,
+	}
+	cg2 := ConfessionsGenerator{
+		id: "2",
+		mu: &mu,
+	}
 
-	time.Sleep(time.Second * 1)
+	c1 := anonbcast.NewClient(s, cg1, end, results)
+	c2 := anonbcast.NewClient(s, cg2, end, make(chan anonbcast.RoundResult))
 
-	c.Start(0)
+	log.Printf("server: %+v, client 1: %+v, client 2: %+v\n", s, c1, c2)
 
-	time.Sleep(time.Second * 5)
-
-	// TODO: think more about the api between clients and users!
-	//for i := 0; ; i++ {
-	//	c.Start(i) // TODO: only start a round if it is actually the right round / etc
-	//	reader := bufio.NewReader(os.Stdin)
-	//	fmt.Printf("Message to send: ")
-	//	msg, err := reader.ReadString('\n')
-	//	if err != nil {
-	//		fmt.Fprintln(os.Stderr, err)
-	//		return
-	//	}
-	//	msg = strings.TrimSuffix(msg, "\n")
-	//}
+	for i := 0; ; i++ {
+		time.Sleep(time.Millisecond * 500)
+		fmt.Printf("Starting round %d!\n", i)
+		c1.Start(i)
+		for {
+			r := <-results
+			if r.Round != i { // TODO: this assumes the results are sent in order, which they aren't
+				continue
+			}
+			if r.Succeeded {
+				fmt.Printf("Round %d succeeded! Anonymized broadcast messages are:\n", r.Round)
+				for _, m := range r.Messages {
+					fmt.Printf("\t%s\n", m)
+				}
+			} else {
+				fmt.Printf("Round %d failed :(\n", r.Round)
+			}
+			break
+		}
+	}
 }

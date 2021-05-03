@@ -12,6 +12,8 @@ import (
 // communication necessary for an application to broadcast anonymous messages. A Client
 // interacts with a local Server instance to get information, and a possibly remote Server
 // instance to write information.
+// TODO: Client probably need some locking? on the one hand it is basically only modified
+// 	inside the readUpdates thread but i think it is read elsewhere
 type Client struct {
 	// Id is the id of this client. Each client has its own unique id.
 	Id uuid.UUID
@@ -24,6 +26,21 @@ type Client struct {
 	// TODO: this leader needs to be updated whenever the leader fails
 	// 	think about how to deal with leader failures
 	leader *labrpc.ClientEnd
+
+	// resCh does NOT guarantee that results are sent in order
+	// TODO: add this guarantee? but does the channel need to be buffered then?
+	// TODO: yes, make the results be sent in order
+	resCh chan<- RoundResult
+}
+
+type RoundResult struct {
+	// Round is the round we're looking at.
+	Round int
+	// Succeeded is true if the round resulted in the DonePhase
+	// and false if in FailedPhase.
+	Succeeded bool
+	// Messages contains all the plaintext messages from this round.
+	Messages []string
 }
 
 type Messager interface {
@@ -60,6 +77,7 @@ func (c *Client) submitOp(op Op) error {
 func (c *Client) readUpdates() {
 	// TODO: none of this is thought through
 	// 	there's probably a ton of problems here in terms of consistency
+	sentMsgRound := make(map[int]bool)
 	for { // TODO: add killed() ?
 		sm := <-c.updCh
 		c.logf("received state machine update! %+v", sm)
@@ -74,6 +92,25 @@ func (c *Client) readUpdates() {
 		switch ri.Phase {
 		case PreparePhase:
 			// TODO: handle Done and Failed phases of previous rounds maybe?
+			// TODO: do this in a robust way
+			if round > 0 {
+				ri, err := sm.GetRoundInfo(round - 1)
+				assertf(err == nil, "must be able to get previous round")
+				assertf(ri.Phase == DonePhase || ri.Phase == FailedPhase, "must either fail or done")
+				var messages []string
+				for _, m := range ri.Messages {
+					messages = append(messages, string(m)) // TODO: do a ton of decryption here using reveal keys
+				}
+				result := RoundResult{
+					Round:     round - 1,
+					Succeeded: ri.Phase == DonePhase,
+					Messages:  messages,
+				}
+				// TODO: if we want updates in order, figure out how to do that
+				go func(resCh chan<- RoundResult, r RoundResult) {
+					resCh <- r
+				}(c.resCh, result)
+			}
 			// if we are not in the participants list, we wanna submit ourselves!
 			if me == -1 {
 				op := PublicKeyOp{
@@ -86,46 +123,53 @@ func (c *Client) readUpdates() {
 			}
 		case EncryptPhase:
 			// TODO: implement timeout here??
-			msg := c.m.Message(round) // TODO: encrypt!
-			op := MessageOp{
-				Id:      c.Id,
-				Round:   round,
-				Message: Msg(msg),
+			if !sentMsgRound[round] {
+				msg := c.m.Message(round) // TODO: encrypt!
+				op := MessageOp{
+					Id:      c.Id,
+					Round:   round,
+					Message: Msg(msg),
+				}
+				err := c.submitOp(op)
+				c.assertf(err == nil, "err: %v", err) // TODO: handle this error
+				sentMsgRound[round] = true
 			}
-			err := c.submitOp(op)
-			c.assertf(err == nil, "err: %v", err) // TODO: handle this error
 		case ScramblePhase:
 			// TODO: timeout?
-			prev := 0
-			for _, scrambled := range ri.Scrambled {
-				if scrambled {
-					prev++
+			if !ri.Scrambled[me] {
+				prev := 0
+				for _, scrambled := range ri.Scrambled {
+					if scrambled {
+						prev++
+					}
 				}
+				op := ScrambledOp{
+					Id:       c.Id,
+					Round:    round,
+					Messages: ri.Messages, // TODO: scramble and encrypt!
+					Prev:     prev,
+				}
+				err := c.submitOp(op)
+				c.assertf(err == nil, "err: %v", err) // TODO: handle this error.
 			}
-			op := ScrambledOp{
-				Id:       c.Id,
-				Round:    round,
-				Messages: ri.Messages, // TODO: scramble and encrypt!
-				Prev:     prev,
-			}
-			err := c.submitOp(op)
-			c.assertf(err == nil, "err: %v", err) // TODO: handle this error.
 		case DecryptPhase:
 			// TODO: timeout?
-			prev := 0
-			for _, decrypted := range ri.Decrypted {
-				if decrypted {
-					prev++
+			if !ri.Decrypted[me] {
+				prev := 0
+				for _, decrypted := range ri.Decrypted {
+					if decrypted {
+						prev++
+					}
 				}
+				op := DecryptedOp{
+					Id:       c.Id,
+					Round:    round,
+					Messages: ri.Messages, // TODO: decrypt!
+					Prev:     prev,
+				}
+				err := c.submitOp(op)
+				c.assertf(err == nil, "err: %v", err) // TODO: handle this error.
 			}
-			op := DecryptedOp{
-				Id:       c.Id,
-				Round:    round,
-				Messages: ri.Messages, // TODO: decrypt!
-				Prev:     prev,
-			}
-			err := c.submitOp(op)
-			c.assertf(err == nil, "err: %v", err) // TODO: handle this error.
 		case RevealPhase:
 			op := RevealOp{
 				Id:        c.Id,
@@ -158,12 +202,13 @@ func (c *Client) dump() {
 	}
 }
 
-func NewClient(s *Server, m Messager, leader *labrpc.ClientEnd) *Client {
+func NewClient(s *Server, m Messager, leader *labrpc.ClientEnd, resCh chan<- RoundResult) *Client {
 	c := new(Client)
 	c.Id = uuid.New()
 	c.updCh = s.GetUpdCh()
 	c.m = m
 	c.leader = leader
+	c.resCh = resCh
 
 	go c.readUpdates()
 
