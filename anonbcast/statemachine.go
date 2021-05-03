@@ -92,6 +92,7 @@ func (sm *StateMachine) Apply(op Op) bool {
 	defer sm.checkRep()
 	// TODO: tie this to the server's logger somehow?
 	DPrintf("applying operation %+v to the state machine", op)
+	defer DPrintf("state machine is now: %+v", sm)
 
 	switch op.Type() {
 	case PublicKeyOpType:
