@@ -2,6 +2,7 @@ package anonbcast
 
 import (
 	"errors"
+
 	"github.com/google/uuid"
 )
 
@@ -36,7 +37,7 @@ type StateMachine struct {
 }
 
 func (sm *StateMachine) checkRep() {
-	if !Debug {
+	if !IsDebug() {
 		return
 	}
 	assertf(sm.Round >= 0, "round must be non-negative")
@@ -66,7 +67,7 @@ type RoundInfo struct {
 }
 
 func (ri *RoundInfo) checkRep() {
-	if !Debug {
+	if !IsDebug() {
 		return
 	}
 	assertf(len(ri.Participants) == len(ri.PublicKeys), "must be equally many participants as public keys!")

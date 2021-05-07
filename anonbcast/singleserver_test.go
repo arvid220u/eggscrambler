@@ -1,12 +1,16 @@
 package anonbcast
 
 import (
+	"testing"
+
 	"github.com/arvid220u/6.824-project/mockraft"
 	"github.com/arvid220u/6.824-project/raft"
-	"testing"
 )
 
 func TestServerMockraftNoFailures(t *testing.T) {
+	SetDebug(true)
+	SetDump(true)
+
 	applyCh := make(chan raft.ApplyMsg)
 	rf := mockraft.New(applyCh)
 	s := NewServer(rf)

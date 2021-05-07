@@ -3,25 +3,50 @@ package anonbcast
 import (
 	"fmt"
 	"log"
+	"os"
 )
 
 // Debugging
-// TODO: make this into an environment variable or something
-const Debug = true
-
-// EnableDump may cause race conditions!!
-const EnableDump = false
+// Dump may have race conditions
+const debugEnvKey = "DEBUG"
+const dumpEnvKey = "DUMP"
 
 func DPrintf(format string, a ...interface{}) {
 	log.SetFlags(log.Lmicroseconds)
-	if Debug {
+	if IsDebug() {
 		log.Printf(format, a...)
 	}
 	return
 }
 
 func assertf(condition bool, format string, a ...interface{}) {
-	if Debug && !condition {
+	if IsDebug() && !condition {
 		panic(fmt.Sprintf(format, a...))
 	}
+}
+
+func SetDebug(debug bool) {
+	envVal := ""
+	if debug {
+		envVal = "true"
+	}
+	os.Setenv(debugEnvKey, envVal)
+}
+
+func IsDebug() bool {
+	envVal := os.Getenv(debugEnvKey)
+	return envVal == "true"
+}
+
+func SetDump(dump bool) {
+	envVal := ""
+	if dump {
+		envVal = "true"
+	}
+	os.Setenv(dumpEnvKey, envVal)
+}
+
+func IsDump() bool {
+	envVal := os.Getenv(dumpEnvKey)
+	return envVal == "true"
 }

@@ -2,11 +2,12 @@ package anonbcast
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
+
 	"github.com/arvid220u/6.824-project/labgob"
 	"github.com/arvid220u/6.824-project/raft"
 	"github.com/davecgh/go-spew/spew"
-	"sync"
-	"sync/atomic"
 )
 
 // Server implements the shared state machine on top of Raft, that is used
@@ -159,13 +160,13 @@ func (s *Server) logf(format string, a ...interface{}) {
 func (s *Server) assertf(condition bool, format string, a ...interface{}) {
 	logHeader := fmt.Sprintf("[server ?] ")
 	dump := ""
-	if EnableDump {
+	if IsDump() {
 		dump = "\n\n" + spew.Sdump(s)
 	}
 	assertf(condition, logHeader+format+dump, a...)
 }
 func (s *Server) dump() {
-	if Debug && EnableDump {
+	if IsDebug() && IsDump() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.logf(spew.Sdump(s))

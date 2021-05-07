@@ -3,6 +3,7 @@ package anonbcast
 import (
 	"errors"
 	"fmt"
+
 	"github.com/arvid220u/6.824-project/labrpc"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/uuid"
@@ -190,13 +191,13 @@ func (c *Client) logf(format string, a ...interface{}) {
 func (c *Client) assertf(condition bool, format string, a ...interface{}) {
 	logHeader := fmt.Sprintf("[client %s] ", c.Id.String())
 	dump := ""
-	if EnableDump {
+	if IsDump() {
 		dump = "\n\n" + spew.Sdump(c)
 	}
 	assertf(condition, logHeader+format+dump, a...)
 }
 func (c *Client) dump() {
-	if Debug && EnableDump {
+	if IsDebug() && IsDump() {
 		// TODO: lock here?
 		c.logf(spew.Sdump(c))
 	}
