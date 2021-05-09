@@ -16,7 +16,6 @@ func DPrintf(format string, a ...interface{}) {
 	if IsDebug() {
 		log.Printf(format, a...)
 	}
-	return
 }
 
 func assertf(condition bool, format string, a ...interface{}) {

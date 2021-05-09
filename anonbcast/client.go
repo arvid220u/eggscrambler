@@ -3,9 +3,10 @@ package anonbcast
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
-	"github.com/arvid220u/6.824-project/labrpc"
+	"github.com/arvid220u/6.824-project/network"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/uuid"
 )
@@ -21,19 +22,19 @@ type Client struct {
 
 	// dead indicates whether the client is alive. Set by Kill()
 	dead int32
+	mu   sync.Mutex
 
 	// m is an object that provides a message to send on a given round.
 	m Messager
 
-	// updCh is received from Server.GetUpdCh.
-	updCh <-chan StateMachine
-
 	// lastUpdate stores the last update received on the state machine
 	lastUpdate *lastStateMachine
 
-	// TODO: this leader needs to be updated whenever the leader fails
-	// 	think about how to deal with leader failures
-	leader *labrpc.ClientEnd
+	updCh <-chan UpdateMsg
+
+	cp                 network.ConnectionProvider
+	currConf           []int
+	lastKnownLeaderInd int
 
 	resCh chan RoundResult
 
@@ -63,15 +64,12 @@ type Messager interface {
 // leader's log. It does not retry on failure.
 func (c *Client) submitOp(op Op) error {
 	var reply RpcReply
-	// TODO: time out quickly if the server does not send a response
-	ok := c.leader.Call("Server.SubmitOp", &op, &reply)
+	ok := c.cp.Call(c.currConf[c.lastKnownLeaderInd], "Server.SubmitOp", &op, &reply)
 	if !ok {
-		panic("idk what to do here. is this because of timeout?") // TODO: figure out why we get !ok. but we should just return an error, retry happens outside this function
-		return errors.New("idk")
+		return errors.New("No response")
 	}
-	if reply.Err == ErrWrongLeader {
-		panic("update leader here and then retry?") // TODO: update leader, but don't retry here -- just return an error. the retry logic happens outside
-		return errors.New("wrong leader")
+	if reply.Err != OK {
+		return errors.New(string(reply.Err))
 	}
 	return nil
 }
@@ -176,82 +174,101 @@ func (c *Client) reveal(round int, ri *RoundInfo, me int) {
 // readUpdates is a long-running goroutine that reads from the updCh and takes
 // action to follow the protocol.
 func (c *Client) readUpdates() {
-
 	lastResChSend := -1
 	lastMessageRound := -1
 	version := 0
 
 	// in this loop, all heavy work is done in goroutines. this is because the server always expects
 	// to be able to send on the updCh.
-	for c.killed() == false {
-		sm := <-c.updCh
-		c.logf("received state machine update! %+v", sm)
+	for !c.killed() {
+		updMsg := <-c.updCh
 
-		go c.lastUpdate.set(sm, version)
-		version++
+		if updMsg.StateMachineValid {
+			sm := updMsg.StateMachine
+			c.logf("received state machine update! %+v", sm)
 
-		round := sm.Round
-		ri := sm.CurrentRoundInfo()
-		me := -1
-		for i, p := range ri.Participants {
-			if p == c.Id {
-				me = i
+			go c.lastUpdate.set(sm, version)
+			version++
+
+			round := sm.Round
+			ri := sm.CurrentRoundInfo()
+			me := -1
+			for i, p := range ri.Participants {
+				if p == c.Id {
+					me = i
+				}
 			}
+
+			switch ri.Phase {
+			case PreparePhase:
+				if round-1 > lastResChSend {
+					// send the result of the previous round!
+					assertf(lastResChSend == round-2, "required to be true because updates are in order")
+					go c.sendRoundResult(sm, round)
+					lastResChSend = round - 1
+				}
+				go c.prepare(round, ri, me)
+			case EncryptPhase:
+				if me == -1 {
+					// we don't have any business in this round
+					continue
+				}
+				// we want to make sure that we only ask the user for a message once per round
+				if round > lastMessageRound {
+					go c.encrypt(round, ri, me)
+					lastMessageRound = round
+				}
+			case ScramblePhase:
+				if me == -1 {
+					// we don't have any business in this round
+					continue
+				}
+				go c.scramble(round, ri, me)
+			case DecryptPhase:
+				if me == -1 {
+					// we don't have any business in this round
+					continue
+				}
+				go c.decrypt(round, ri, me)
+			case RevealPhase:
+				if me == -1 {
+					// we don't have any business in this round
+					continue
+				}
+				go c.reveal(round, ri, me)
+			}
+		} else if updMsg.ConfigurationValid {
+			c.logf("Received configuration update: %v", updMsg.Configuration)
+			c.mu.Lock()
+			c.currConf = mapToSlice(updMsg.Configuration)
+			assertf(len(c.currConf) > 0, "Expected configuration with at least 1 server, but none found: %v", updMsg.Configuration)
+			c.lastKnownLeaderInd = 0 // reset this to avoid OOB errors
+			c.mu.Unlock()
 		}
 
-		switch ri.Phase {
-		case PreparePhase:
-			if round-1 > lastResChSend {
-				// send the result of the previous round!
-				assertf(lastResChSend == round-2, "required to be true because updates are in order")
-				go c.sendRoundResult(sm, round)
-				lastResChSend = round - 1
-			}
-			go c.prepare(round, ri, me)
-		case EncryptPhase:
-			if me == -1 {
-				// we don't have any business in this round
-				continue
-			}
-			// we want to make sure that we only ask the user for a message once per round
-			if round > lastMessageRound {
-				go c.encrypt(round, ri, me)
-				lastMessageRound = round
-			}
-		case ScramblePhase:
-			if me == -1 {
-				// we don't have any business in this round
-				continue
-			}
-			go c.scramble(round, ri, me)
-		case DecryptPhase:
-			if me == -1 {
-				// we don't have any business in this round
-				continue
-			}
-			go c.decrypt(round, ri, me)
-		case RevealPhase:
-			if me == -1 {
-				// we don't have any business in this round
-				continue
-			}
-			go c.reveal(round, ri, me)
-		}
 	}
 }
 
 // submitOps is a long-running goroutine that gets pending ops and submits them to the leader
 func (c *Client) submitOps() {
-	for c.killed() == false {
+	for !c.killed() {
 		op := c.pending.get()
-		err := c.submitOp(op)
-		if err != nil {
-			// just do nothing! op will still be the first op in pending so we will retry automatically
-			continue
+
+		// TODO maybe a switch case to handle other types of errors?
+		if err := c.submitOp(op); err != nil {
+			c.updateLeader()
+		} else {
+			// op is now done, so remove it from the pending ops if it is there
+			c.pending.finish(op)
 		}
-		// op is now done, so remove it from the pending ops if it is there
-		c.pending.finish(op)
 	}
+}
+
+// Cycles through the servers in the known configuration
+func (c *Client) updateLeader() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastKnownLeaderInd = (c.lastKnownLeaderInd + 1) % len(c.currConf)
 }
 
 // Kill kills all long-running goroutines and releases any memory
@@ -283,6 +300,15 @@ func (c *Client) dump() {
 		// ideally we would lock before we dump to avoid races, but we don't have a global lock so we can't :(
 		c.logf(spew.Sdump(c))
 	}
+}
+
+func mapToSlice(mp map[int]bool) []int {
+	sl := make([]int, 0)
+	for k := range mp {
+		sl = append(sl, k)
+	}
+
+	return sl
 }
 
 // GetResCh returns a channel on which the results of rounds are sent.
@@ -324,14 +350,24 @@ func (c *Client) Start(round int) error {
 	return nil
 }
 
-func NewClient(s *Server, m Messager, leader *labrpc.ClientEnd) *Client {
+// TODO remove Server from this argument list, but will require a discussion
+// about how to replace the updCh, since we can't use channels over
+// labrpc or the real network.
+func NewClient(s *Server, m Messager, cp network.ConnectionProvider) *Client {
 	c := new(Client)
 	c.Id = uuid.New()
-	c.updCh = s.GetUpdCh()
 	c.m = m
-	c.leader = leader
 	c.pending = newEliminationQueue()
 	c.lastUpdate = newLastStateMachine()
+	c.cp = cp
+	c.currConf = make([]int, 0)
+	c.updCh = s.GetUpdCh()
+
+	// Assume the configuration has all possible servers, until we get notified otherwise
+	peers := cp.NumPeers()
+	for i := 0; i < peers; i++ {
+		c.currConf = append(c.currConf, i)
+	}
 
 	go c.readUpdates()
 	go c.submitOps()

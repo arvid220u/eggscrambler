@@ -1,8 +1,9 @@
 package mockraft
 
 import (
-	"github.com/arvid220u/6.824-project/raft"
 	"sync"
+
+	"github.com/arvid220u/6.824-project/raft"
 )
 
 // Mockraft is a single-server mock of Raft, that always commits every single entry, immediately.
@@ -35,6 +36,9 @@ func (m *Mockraft) Snapshot(index int, snapshot []byte) {
 
 func (m *Mockraft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 	return true
+}
+func (m *Mockraft) GetState() (int, bool) {
+	return 1, true
 }
 
 func (m *Mockraft) GetApplyCh() <-chan raft.ApplyMsg {

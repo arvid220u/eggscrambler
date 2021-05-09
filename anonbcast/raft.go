@@ -32,4 +32,9 @@ type Raft interface {
 	// GetApplyCh returns a channel that Raft sends updates on. The same channel
 	// is always returned.
 	GetApplyCh() <-chan raft.ApplyMsg
+
+	// return currentTerm and whether this server
+	// believes it is the leader.
+	// Useful for testing.
+	GetState() (int, bool)
 }

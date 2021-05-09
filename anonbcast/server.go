@@ -6,9 +6,18 @@ import (
 	"sync/atomic"
 
 	"github.com/arvid220u/6.824-project/labgob"
+	"github.com/arvid220u/6.824-project/network"
 	"github.com/arvid220u/6.824-project/raft"
 	"github.com/davecgh/go-spew/spew"
 )
+
+type UpdateMsg struct {
+	ConfigurationValid bool
+	Configuration      map[int]bool
+
+	StateMachineValid bool
+	StateMachine      StateMachine
+}
 
 // Server implements the shared state machine on top of Raft, that is used
 // for performing the anonymous broadcasting protocol. It exposes RPCs that
@@ -26,7 +35,7 @@ type Server struct {
 	applyCh <-chan raft.ApplyMsg
 	// updChs stores all channels on which state machine updates should be sent.
 	// Each update should be sent to each channel.
-	updChs []chan StateMachine // slice protected by mu
+	updChs []chan UpdateMsg // slice protected by mu
 
 	// resps stores one channel for every pending request, indexed by Raft term and log index
 	resps RespChannels // protected by mu
@@ -52,6 +61,13 @@ func NewServer(rf Raft) *Server {
 	return s
 }
 
+// Creates and starts new anonbcast server using a real raft instance
+func MakeServer(cp network.ConnectionProvider, me int, initialCfg map[int]bool, persister *raft.Persister, maxraftstate int) *Server {
+	applyCh := make(chan raft.ApplyMsg, 1)
+	rf := raft.Make(cp, me, initialCfg, persister, applyCh, false)
+	return NewServer(rf)
+}
+
 type Err string
 
 const (
@@ -61,6 +77,14 @@ const (
 
 type RpcReply struct {
 	Err Err
+}
+
+func (s *Server) IsLeader(args interface{}, reply *RpcReply) {
+	if _, isLeader := s.rf.GetState(); isLeader {
+		reply.Err = OK
+	} else {
+		reply.Err = ErrWrongLeader
+	}
 }
 
 // SubmitOp is an RPC for clients to submit operations to the state machine.
@@ -102,7 +126,7 @@ func (s *Server) SubmitOp(args *Op, reply *RpcReply) {
 }
 
 func (s *Server) applier() {
-	for s.killed() == false {
+	for !s.killed() {
 		msg := <-s.applyCh
 
 		s.logf("received msg %v from raft!", msg)
@@ -114,7 +138,7 @@ func (s *Server) applier() {
 
 			updated := s.sm.Apply(op)
 			if updated {
-				s.sendUpdate()
+				s.sendStateMachineUpdate()
 			}
 
 			ch := s.resps.Get(msg.CommandTerm, msg.CommandIndex)
@@ -132,6 +156,8 @@ func (s *Server) applier() {
 			}
 		} else if msg.SnapshotValid {
 			s.assertf(false, "snapshots not implemented yet")
+		} else if msg.ConfigValid {
+			s.sendConfigurationUpdate(msg.Configuration)
 		} else {
 			s.assertf(false, "a message has to be either a command, an update or a snapshot!")
 		}
@@ -183,23 +209,30 @@ func (s *Server) dump() {
 //
 // The client MUST almost always be reading from the channel. It may never block for an extended
 // amount of time not reading on the returned channel.
-func (s *Server) GetUpdCh() <-chan StateMachine {
+func (s *Server) GetUpdCh() <-chan UpdateMsg {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// make it buffered with buffer 1 so that we can send the first state machine right here
-	ch := make(chan StateMachine, 1)
+	ch := make(chan UpdateMsg, 1)
 	s.updChs = append(s.updChs, ch)
 
-	ch <- s.sm.DeepCopy()
+	ch <- UpdateMsg{StateMachineValid: true, StateMachine: s.sm.DeepCopy()}
 
 	return ch
 }
 
-// sendUpdate sends updates to all updCh. Assumes lock on
+//Assumes lock on
 // s.mu is HELD.
-func (s *Server) sendUpdate() {
+func (s *Server) sendStateMachineUpdate() {
 	for _, ch := range s.updChs {
-		ch <- s.sm.DeepCopy()
+		ch <- UpdateMsg{StateMachineValid: true, StateMachine: s.sm.DeepCopy()}
+	}
+}
+
+// Assumes lock on s.mu is HELD.
+func (s *Server) sendConfigurationUpdate(conf map[int]bool) {
+	for _, ch := range s.updChs {
+		ch <- UpdateMsg{ConfigurationValid: true, Configuration: conf}
 	}
 }

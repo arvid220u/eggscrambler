@@ -2,11 +2,13 @@ package anonbcast
 
 import (
 	"fmt"
-	"github.com/arvid220u/6.824-project/labrpc"
 	"sort"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/arvid220u/6.824-project/labrpc"
+	"github.com/arvid220u/6.824-project/network"
 
 	"github.com/arvid220u/6.824-project/mockraft"
 	"github.com/arvid220u/6.824-project/raft"
@@ -20,7 +22,12 @@ func TestServerMockraftNoFailures(t *testing.T) {
 	updCh := s.GetUpdCh()
 
 	// assert initial state is correct
-	st := <-updCh
+	upd := <-updCh
+	if !upd.StateMachineValid {
+		t.Errorf("Expected StateMachine update but got: %v", upd)
+	}
+
+	st := upd.StateMachine
 	ri, err := st.GetRoundInfo(0)
 	if err != nil {
 		t.Fatal(err)
@@ -98,6 +105,10 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	net.Connect("client3", "server")
 	net.Enable("client3", true)
 
+	cp1 := network.New([]*labrpc.ClientEnd{end1})
+	cp2 := network.New([]*labrpc.ClientEnd{end2})
+	cp3 := network.New([]*labrpc.ClientEnd{end3})
+
 	var mu sync.Mutex
 	mg1 := MessageGenerator{
 		id: "1",
@@ -112,12 +123,12 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 		mu: &mu,
 	}
 
-	c1 := NewClient(s, mg1, end1)
+	c1 := NewClient(s, mg1, cp1)
 	results := c1.GetResCh()
 	orderedResults := make(chan RoundResult)
 	go resultOrderer(results, orderedResults)
-	c2 := NewClient(s, mg2, end2)
-	c3 := NewClient(s, mg3, end3)
+	c2 := NewClient(s, mg2, cp2)
+	c3 := NewClient(s, mg3, cp3)
 
 	for i := 0; i < 1000; i++ {
 		if i%2 == 0 {

@@ -3,15 +3,17 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"github.com/arvid220u/6.824-project/anonbcast"
-	"github.com/arvid220u/6.824-project/labrpc"
-	"github.com/arvid220u/6.824-project/mockraft"
-	"github.com/arvid220u/6.824-project/raft"
 	"log"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/arvid220u/6.824-project/anonbcast"
+	"github.com/arvid220u/6.824-project/labrpc"
+	"github.com/arvid220u/6.824-project/mockraft"
+	"github.com/arvid220u/6.824-project/network"
+	"github.com/arvid220u/6.824-project/raft"
 )
 
 type ConfessionsGenerator struct {
@@ -70,6 +72,9 @@ func main() {
 	net.Connect("client2", "server")
 	net.Enable("client2", true)
 
+	cp1 := network.New([]*labrpc.ClientEnd{end1})
+	cp2 := network.New([]*labrpc.ClientEnd{end2})
+
 	var mu sync.Mutex
 	cg1 := ConfessionsGenerator{
 		id: "1",
@@ -80,11 +85,11 @@ func main() {
 		mu: &mu,
 	}
 
-	c1 := anonbcast.NewClient(s, cg1, end1)
+	c1 := anonbcast.NewClient(s, cg1, cp1)
 	results := c1.GetResCh()
 	orderedResults := make(chan anonbcast.RoundResult)
 	go resultOrderer(results, orderedResults)
-	c2 := anonbcast.NewClient(s, cg2, end2)
+	c2 := anonbcast.NewClient(s, cg2, cp2)
 
 	log.Printf("server: %+v, client 1: %+v, client 2: %+v\n", s, c1, c2)
 
