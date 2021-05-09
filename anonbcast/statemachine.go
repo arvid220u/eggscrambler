@@ -95,6 +95,10 @@ func (sm *StateMachine) Apply(op Op) bool {
 	DPrintf("applying operation %+v to the state machine", op)
 	defer DPrintf("state machine is now: %+v", sm)
 
+	if op.Round() != sm.Round {
+		return false
+	}
+
 	switch op.Type() {
 	case PublicKeyOpType:
 		return sm.publicKey(op.(PublicKeyOp))
@@ -117,9 +121,6 @@ func (sm *StateMachine) Apply(op Op) bool {
 }
 
 func (sm *StateMachine) publicKey(op PublicKeyOp) bool {
-	if op.Round != sm.Round {
-		return false
-	}
 	ri := sm.CurrentRoundInfo()
 	if ri.Phase != PreparePhase {
 		return false
@@ -141,9 +142,6 @@ func (sm *StateMachine) publicKey(op PublicKeyOp) bool {
 }
 
 func (sm *StateMachine) start(op StartOp) bool {
-	if op.Round != sm.Round {
-		return false
-	}
 	ri := sm.CurrentRoundInfo()
 	if ri.Phase != PreparePhase {
 		return false
@@ -163,9 +161,6 @@ func (ri *RoundInfo) participantIndex(id uuid.UUID) (int, error) {
 }
 
 func (sm *StateMachine) message(op MessageOp) bool {
-	if op.Round != sm.Round {
-		return false
-	}
 	ri := sm.CurrentRoundInfo()
 	if ri.Phase != EncryptPhase {
 		return false
@@ -178,7 +173,7 @@ func (sm *StateMachine) message(op MessageOp) bool {
 	ri.Messages[p] = op.Message
 
 	for _, m := range ri.Messages {
-		if m == Msg("") {
+		if m == Msg("") { // TODO: update with real nil type for Msg
 			return true
 		}
 	}
@@ -198,9 +193,6 @@ func (ri *RoundInfo) numScrambled() int {
 }
 
 func (sm *StateMachine) scrambled(op ScrambledOp) bool {
-	if op.Round != sm.Round {
-		return false
-	}
 	ri := sm.CurrentRoundInfo()
 	if ri.Phase != ScramblePhase {
 		return false
@@ -239,9 +231,6 @@ func (ri *RoundInfo) numDecrypted() int {
 }
 
 func (sm *StateMachine) decrypted(op DecryptedOp) bool {
-	if op.Round != sm.Round {
-		return false
-	}
 	ri := sm.CurrentRoundInfo()
 	if ri.Phase != DecryptPhase {
 		return false
@@ -270,9 +259,6 @@ func (sm *StateMachine) decrypted(op DecryptedOp) bool {
 }
 
 func (sm *StateMachine) reveal(op RevealOp) bool {
-	if op.Round != sm.Round {
-		return false
-	}
 	ri := sm.CurrentRoundInfo()
 	if ri.Phase != RevealPhase {
 		return false
@@ -298,9 +284,6 @@ func (sm *StateMachine) reveal(op RevealOp) bool {
 }
 
 func (sm *StateMachine) abort(op AbortOp) bool {
-	if op.Round != sm.Round {
-		return false
-	}
 	ri := sm.CurrentRoundInfo()
 
 	ri.Phase = FailedPhase
@@ -337,7 +320,10 @@ func (sm *StateMachine) CurrentRoundInfo() *RoundInfo {
 // op has round 9, this should return true. It is always safe to return
 // false, but it may improve performance to return true when allowed.
 func (sm *StateMachine) GuaranteedNoEffect(op Op) bool {
-	// TODO: return true if round number is wrong
+	// TODO: potentially add more optimizations here, looking at the phase of the op
+	if op.Round() < sm.Round {
+		return true
+	}
 	return false
 }
 

@@ -3,6 +3,7 @@ package anonbcast
 import (
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/arvid220u/6.824-project/labrpc"
 	"github.com/davecgh/go-spew/spew"
@@ -13,27 +14,34 @@ import (
 // communication necessary for an application to broadcast anonymous messages. A Client
 // interacts with a local Server instance to get information, and a possibly remote Server
 // instance to write information.
-// TODO: Client probably need some locking? on the one hand it is basically only modified
-// 	inside the readUpdates thread but i think it is read elsewhere
 type Client struct {
 	// Id is the id of this client. Each client has its own unique id.
+	// Immutable.
 	Id uuid.UUID
+
+	// dead indicates whether the client is alive. Set by Kill()
+	dead int32
 
 	// m is an object that provides a message to send on a given round.
 	m Messager
 
+	// updCh is received from Server.GetUpdCh.
 	updCh <-chan StateMachine
+
+	// lastUpdate stores the last update received on the state machine
+	lastUpdate *lastStateMachine
 
 	// TODO: this leader needs to be updated whenever the leader fails
 	// 	think about how to deal with leader failures
 	leader *labrpc.ClientEnd
 
-	// resCh does NOT guarantee that results are sent in order
-	// TODO: add this guarantee? but does the channel need to be buffered then?
-	// TODO: yes, make the results be sent in order
-	resCh chan<- RoundResult
+	resCh chan RoundResult
+
+	// pending stores the operations that are pending submission to the leader
+	pending *eliminationQueue
 }
 
+// RoundResult represents the final outcome of a round.
 type RoundResult struct {
 	// Round is the round we're looking at.
 	Round int
@@ -51,37 +59,137 @@ type Messager interface {
 	Message(round int) string
 }
 
-// Start indicates the intent of the user to start the round.
-func (c *Client) Start(round int) {
-	op := StartOp{
-		Id:    c.Id,
-		Round: round,
-	}
-	err := c.submitOp(op)
-	assertf(err == nil, "idk: %v", err) // TODO: handle this error!
-}
-
+// submitOp submits the op to the leader, returning an error if the op is not successfully committed to the
+// leader's log. It does not retry on failure.
 func (c *Client) submitOp(op Op) error {
 	var reply RpcReply
+	// TODO: time out quickly if the server does not send a response
 	ok := c.leader.Call("Server.SubmitOp", &op, &reply)
 	if !ok {
-		panic("idk what to do here. is this because of timeout?") // TODO: figure out what to do here! retry?
+		panic("idk what to do here. is this because of timeout?") // TODO: figure out why we get !ok. but we should just return an error, retry happens outside this function
 		return errors.New("idk")
 	}
 	if reply.Err == ErrWrongLeader {
-		panic("update leader here and then retry?") // TODO: retry with new leader here
+		panic("update leader here and then retry?") // TODO: update leader, but don't retry here -- just return an error. the retry logic happens outside
 		return errors.New("wrong leader")
 	}
 	return nil
 }
 
+// sendRoundResult is a helper method to readUpdates
+func (c *Client) sendRoundResult(sm StateMachine, round int) {
+	ri, err := sm.GetRoundInfo(round - 1)
+	if err != nil {
+		assertf(false, "must be able to get previous round, error is %v", err)
+	}
+	assertf(ri.Phase == DonePhase || ri.Phase == FailedPhase, "must either fail or done")
+	var messages []string
+	for _, m := range ri.Messages {
+		messages = append(messages, string(m)) // TODO: do a ton of decryption here using reveal keys
+	}
+	result := RoundResult{
+		Round:     round - 1,
+		Succeeded: ri.Phase == DonePhase,
+		Messages:  messages,
+	}
+	if c.resCh != nil {
+		c.resCh <- result
+	}
+}
+
+// prepare is a helper method to readUpdates
+func (c *Client) prepare(round int, ri *RoundInfo, me int) {
+	if me == -1 {
+		op := PublicKeyOp{
+			Id:        c.Id,
+			R:         round,
+			PublicKey: "public key here!", // TODO: generate a new public key here, and probably all other keys
+		}
+		c.pending.add(op)
+	}
+}
+
+// encrypt is a helper method to readUpdates
+func (c *Client) encrypt(round int, ri *RoundInfo, me int) {
+	if ri.Messages[me] == Msg("") { // TODO: update with real nil type for Msg
+		// TODO: time out here! if Message does not return within X seconds, then use a dummy message
+		msg := c.m.Message(round) // TODO: encrypt!
+		op := MessageOp{
+			Id:      c.Id,
+			R:       round,
+			Message: Msg(msg),
+		}
+		c.pending.add(op)
+	}
+}
+
+// scramble is a helper method to readUpdates
+func (c *Client) scramble(round int, ri *RoundInfo, me int) {
+	if !ri.Scrambled[me] {
+		prev := 0
+		for _, scrambled := range ri.Scrambled {
+			if scrambled {
+				prev++
+			}
+		}
+		op := ScrambledOp{
+			Id:       c.Id,
+			R:        round,
+			Messages: ri.Messages, // TODO: scramble and encrypt!
+			Prev:     prev,
+		}
+		c.pending.add(op)
+	}
+}
+
+// decrypt is a helper method to readUpdates
+func (c *Client) decrypt(round int, ri *RoundInfo, me int) {
+	if !ri.Decrypted[me] {
+		prev := 0
+		for _, decrypted := range ri.Decrypted {
+			if decrypted {
+				prev++
+			}
+		}
+		op := DecryptedOp{
+			Id:       c.Id,
+			R:        round,
+			Messages: ri.Messages, // TODO: decrypt!
+			Prev:     prev,
+		}
+		c.pending.add(op)
+	}
+}
+
+// reveal is a helper method to readUpdates
+func (c *Client) reveal(round int, ri *RoundInfo, me int) {
+	if ri.RevealedKeys[me] == "" { // TODO: check actual nil type here
+		op := RevealOp{
+			Id:        c.Id,
+			R:         round,
+			RevealKey: "reveal key here lol", // TODO: add reveal key
+		}
+		c.pending.add(op)
+	}
+}
+
+// readUpdates is a long-running goroutine that reads from the updCh and takes
+// action to follow the protocol.
 func (c *Client) readUpdates() {
-	// TODO: none of this is thought through
-	// 	there's probably a ton of problems here in terms of consistency
-	sentMsgRound := make(map[int]bool)
-	for { // TODO: add killed() ?
+
+	lastResChSend := -1
+	lastMessageRound := -1
+	version := 0
+
+	// in this loop, all heavy work is done in goroutines. this is because the server always expects
+	// to be able to send on the updCh.
+	for c.killed() == false {
 		sm := <-c.updCh
 		c.logf("received state machine update! %+v", sm)
+
+		go c.lastUpdate.set(sm, version)
+		version++
+
 		round := sm.Round
 		ri := sm.CurrentRoundInfo()
 		me := -1
@@ -90,97 +198,71 @@ func (c *Client) readUpdates() {
 				me = i
 			}
 		}
+
 		switch ri.Phase {
 		case PreparePhase:
-			// TODO: handle Done and Failed phases of previous rounds maybe?
-			// TODO: do this in a robust way
-			if round > 0 {
-				ri, err := sm.GetRoundInfo(round - 1)
-				assertf(err == nil, "must be able to get previous round")
-				assertf(ri.Phase == DonePhase || ri.Phase == FailedPhase, "must either fail or done")
-				var messages []string
-				for _, m := range ri.Messages {
-					messages = append(messages, string(m)) // TODO: do a ton of decryption here using reveal keys
-				}
-				result := RoundResult{
-					Round:     round - 1,
-					Succeeded: ri.Phase == DonePhase,
-					Messages:  messages,
-				}
-				// TODO: if we want updates in order, figure out how to do that
-				go func(resCh chan<- RoundResult, r RoundResult) {
-					resCh <- r
-				}(c.resCh, result)
+			if round-1 > lastResChSend {
+				// send the result of the previous round!
+				assertf(lastResChSend == round-2, "required to be true because updates are in order")
+				go c.sendRoundResult(sm, round)
+				lastResChSend = round - 1
 			}
-			// if we are not in the participants list, we wanna submit ourselves!
-			if me == -1 {
-				op := PublicKeyOp{
-					Id:        c.Id,
-					Round:     round,
-					PublicKey: "public key here!", // TODO: generate a new public key here, and probably all other keys
-				}
-				err := c.submitOp(op)
-				c.assertf(err == nil, "err: %v", err) // TODO: handle this error
-			}
+			go c.prepare(round, ri, me)
 		case EncryptPhase:
-			// TODO: implement timeout here??
-			if !sentMsgRound[round] {
-				msg := c.m.Message(round) // TODO: encrypt!
-				op := MessageOp{
-					Id:      c.Id,
-					Round:   round,
-					Message: Msg(msg),
-				}
-				err := c.submitOp(op)
-				c.assertf(err == nil, "err: %v", err) // TODO: handle this error
-				sentMsgRound[round] = true
+			if me == -1 {
+				// we don't have any business in this round
+				continue
+			}
+			// we want to make sure that we only ask the user for a message once per round
+			if round > lastMessageRound {
+				go c.encrypt(round, ri, me)
+				lastMessageRound = round
 			}
 		case ScramblePhase:
-			// TODO: timeout?
-			if !ri.Scrambled[me] {
-				prev := 0
-				for _, scrambled := range ri.Scrambled {
-					if scrambled {
-						prev++
-					}
-				}
-				op := ScrambledOp{
-					Id:       c.Id,
-					Round:    round,
-					Messages: ri.Messages, // TODO: scramble and encrypt!
-					Prev:     prev,
-				}
-				err := c.submitOp(op)
-				c.assertf(err == nil, "err: %v", err) // TODO: handle this error.
+			if me == -1 {
+				// we don't have any business in this round
+				continue
 			}
+			go c.scramble(round, ri, me)
 		case DecryptPhase:
-			// TODO: timeout?
-			if !ri.Decrypted[me] {
-				prev := 0
-				for _, decrypted := range ri.Decrypted {
-					if decrypted {
-						prev++
-					}
-				}
-				op := DecryptedOp{
-					Id:       c.Id,
-					Round:    round,
-					Messages: ri.Messages, // TODO: decrypt!
-					Prev:     prev,
-				}
-				err := c.submitOp(op)
-				c.assertf(err == nil, "err: %v", err) // TODO: handle this error.
+			if me == -1 {
+				// we don't have any business in this round
+				continue
 			}
+			go c.decrypt(round, ri, me)
 		case RevealPhase:
-			op := RevealOp{
-				Id:        c.Id,
-				Round:     round,
-				RevealKey: "reveal key here lol", // TODO: add reveal key
+			if me == -1 {
+				// we don't have any business in this round
+				continue
 			}
-			err := c.submitOp(op)
-			c.assertf(err == nil, "err: %v", err) // TODO: handle this error.
+			go c.reveal(round, ri, me)
 		}
 	}
+}
+
+// submitOps is a long-running goroutine that gets pending ops and submits them to the leader
+func (c *Client) submitOps() {
+	for c.killed() == false {
+		op := c.pending.get()
+		err := c.submitOp(op)
+		if err != nil {
+			// just do nothing! op will still be the first op in pending so we will retry automatically
+			continue
+		}
+		// op is now done, so remove it from the pending ops if it is there
+		c.pending.finish(op)
+	}
+}
+
+// Kill kills all long-running goroutines and releases any memory
+// used by the Client instance. After calling Kill no other methods
+// may be called.
+func (c *Client) Kill() {
+	atomic.StoreInt32(&c.dead, 1)
+}
+func (c *Client) killed() bool {
+	z := atomic.LoadInt32(&c.dead)
+	return z == 1
 }
 
 func (c *Client) logf(format string, a ...interface{}) {
@@ -198,20 +280,61 @@ func (c *Client) assertf(condition bool, format string, a ...interface{}) {
 }
 func (c *Client) dump() {
 	if IsDebug() && IsDump() {
-		// TODO: lock here?
+		// ideally we would lock before we dump to avoid races, but we don't have a global lock so we can't :(
 		c.logf(spew.Sdump(c))
 	}
 }
 
-func NewClient(s *Server, m Messager, leader *labrpc.ClientEnd, resCh chan<- RoundResult) *Client {
+// GetResCh returns a channel on which the results of rounds are sent.
+// sent. Each round result will be sent exactly once, but it is not
+// guaranteed that the results will be sent in order, if, for example,
+// the user application does not continuously read from the channel.
+//
+// This method may only be called once.
+func (c *Client) GetResCh() <-chan RoundResult {
+	c.resCh = make(chan RoundResult)
+	return c.resCh
+}
+
+// GetLastStateMachine returns the last known version of the state machine.
+func (c *Client) GetLastStateMachine() StateMachine {
+	return c.lastUpdate.get()
+}
+
+// Start indicates the intent of the user to start the round.
+func (c *Client) Start(round int) error {
+	sm := c.GetLastStateMachine()
+	if sm.Round != round {
+		return errors.New("can only start the current round")
+	}
+	me := false
+	for _, p := range sm.CurrentRoundInfo().Participants {
+		if p == c.Id {
+			me = true
+		}
+	}
+	if !me {
+		return errors.New("can only start a round after submitting the public key. please wait")
+	}
+	op := StartOp{
+		Id: c.Id,
+		R:  round,
+	}
+	go c.pending.add(op)
+	return nil
+}
+
+func NewClient(s *Server, m Messager, leader *labrpc.ClientEnd) *Client {
 	c := new(Client)
 	c.Id = uuid.New()
 	c.updCh = s.GetUpdCh()
 	c.m = m
 	c.leader = leader
-	c.resCh = resCh
+	c.pending = newEliminationQueue()
+	c.lastUpdate = newLastStateMachine()
 
 	go c.readUpdates()
+	go c.submitOps()
 
 	return c
 }

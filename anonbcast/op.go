@@ -19,6 +19,7 @@ const (
 // and gets stored in the Raft log. An Op is immutable and thread safe.
 type Op interface {
 	Type() OpType
+	Round() int
 }
 
 // PublicKeyOp indicates participation for a participant
@@ -27,23 +28,29 @@ type Op interface {
 // If the public key for this user has already been submitted, it is overwritten.
 type PublicKeyOp struct {
 	Id        uuid.UUID
-	Round     int
+	R         int
 	PublicKey string // TODO: update with public key type
 }
 
 func (op PublicKeyOp) Type() OpType {
 	return PublicKeyOpType
 }
+func (op PublicKeyOp) Round() int {
+	return op.R
+}
 
 // StartOp is transitions from the PreparePhase to the EncryptPhase.
 // If Round is not equal to the current round, or the current phase isn't PreparePhase, it is a no-op.
 type StartOp struct {
-	Id    uuid.UUID
-	Round int
+	Id uuid.UUID
+	R  int
 }
 
 func (op StartOp) Type() OpType {
 	return StartOpType
+}
+func (op StartOp) Round() int {
+	return op.R
 }
 
 // MessageOp submits a message that has been encrypted once with each participant's public key.
@@ -53,12 +60,15 @@ func (op StartOp) Type() OpType {
 // If this is the last participant to submit a message, the state machine will transition to the ScramblePhase.
 type MessageOp struct {
 	Id      uuid.UUID
-	Round   int
+	R       int
 	Message Msg
 }
 
 func (op MessageOp) Type() OpType {
 	return MessageOpType
+}
+func (op MessageOp) Round() int {
+	return op.R
 }
 
 // ScrambledOp announces that a participant has scrambled all messages.
@@ -69,7 +79,7 @@ func (op MessageOp) Type() OpType {
 // If this is the last participant to scramble, the state machine will transition to the DecryptPhase.
 type ScrambledOp struct {
 	Id       uuid.UUID
-	Round    int
+	R        int
 	Messages []Msg
 	// Prev is the number of participants who have previously submitted a scrambled.
 	// This supports the test-and-set behavior.
@@ -78,6 +88,9 @@ type ScrambledOp struct {
 
 func (op ScrambledOp) Type() OpType {
 	return ScrambledOpType
+}
+func (op ScrambledOp) Round() int {
+	return op.R
 }
 
 // DecryptedOp announces that a participant has decrypted all messages.
@@ -88,7 +101,7 @@ func (op ScrambledOp) Type() OpType {
 // If this is the last participant to decrypt, the state machine will transition to the RevealPhase.
 type DecryptedOp struct {
 	Id       uuid.UUID
-	Round    int
+	R        int
 	Messages []Msg
 	// Prev is the number of participants who have previously submitted a scrambled.
 	// This supports the test-and-set behavior.
@@ -97,6 +110,9 @@ type DecryptedOp struct {
 
 func (op DecryptedOp) Type() OpType {
 	return DecryptedOpType
+}
+func (op DecryptedOp) Round() int {
+	return op.R
 }
 
 // RevealOp is reveals a participant's reveal key pair.
@@ -107,21 +123,27 @@ func (op DecryptedOp) Type() OpType {
 // as well as increment its current round.
 type RevealOp struct {
 	Id        uuid.UUID
-	Round     int
+	R         int
 	RevealKey string // TODO: update to crypto keypair type
 }
 
 func (op RevealOp) Type() OpType {
 	return RevealOpType
 }
+func (op RevealOp) Round() int {
+	return op.R
+}
 
 // AbortOp aborts the current round.
 // If Round is not equal to the current round, it is a no-op.
 // The state machine will transition to the FailedPhase, and increment its current round.
 type AbortOp struct {
-	Round int
+	R int
 }
 
 func (op AbortOp) Type() OpType {
 	return AbortOpType
+}
+func (op AbortOp) Round() int {
+	return op.R
 }

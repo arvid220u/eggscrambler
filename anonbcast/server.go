@@ -179,17 +179,19 @@ func (s *Server) dump() {
 // every time it updates. This method can be called multiple times; in that case, it will
 // return distinct channels, each of which will receive all updates. At the time this method
 // is called, the current state of the state machine will be immediately sent on the channel.
-// Updates are NOT guaranteed to come in order.  TODO: does it make it easier to implement the client if updates are guaranteed in order?
+// All updates are guaranteed to come, and they are guaranteed to come in order.
+//
+// The client MUST almost always be reading from the channel. It may never block for an extended
+// amount of time not reading on the returned channel.
 func (s *Server) GetUpdCh() <-chan StateMachine {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ch := make(chan StateMachine)
+	// make it buffered with buffer 1 so that we can send the first state machine right here
+	ch := make(chan StateMachine, 1)
 	s.updChs = append(s.updChs, ch)
 
-	go func(ch chan StateMachine, sm StateMachine) {
-		ch <- sm
-	}(ch, s.sm.DeepCopy())
+	ch <- s.sm.DeepCopy()
 
 	return ch
 }
@@ -198,8 +200,6 @@ func (s *Server) GetUpdCh() <-chan StateMachine {
 // s.mu is HELD.
 func (s *Server) sendUpdate() {
 	for _, ch := range s.updChs {
-		go func(ch chan StateMachine, sm StateMachine) {
-			ch <- sm
-		}(ch, s.sm.DeepCopy())
+		ch <- s.sm.DeepCopy()
 	}
 }

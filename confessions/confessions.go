@@ -32,6 +32,23 @@ func (cg ConfessionsGenerator) Message(round int) string {
 	return msg
 }
 
+func resultOrderer(unorderedResults <-chan anonbcast.RoundResult, orderedResults chan<- anonbcast.RoundResult) {
+	var results []anonbcast.RoundResult
+	applyIndex := 0
+	for {
+		r := <-unorderedResults
+		for len(results) <= r.Round {
+			results = append(results, anonbcast.RoundResult{Round: -1})
+		}
+		results[r.Round] = r
+
+		for applyIndex < len(results) && results[applyIndex].Round != -1 {
+			orderedResults <- results[applyIndex]
+			applyIndex++
+		}
+	}
+}
+
 // TODO: extract the confessions app into its own package, and create a very simple
 // 	main package that starts the confessions app.
 func main() {
@@ -42,15 +59,16 @@ func main() {
 
 	net := labrpc.MakeNetwork()
 	defer net.Cleanup()
-	end := net.MakeEnd("client")
+	end1 := net.MakeEnd("client1")
+	end2 := net.MakeEnd("client2")
 	svc := labrpc.MakeService(s)
 	srv := labrpc.MakeServer()
 	srv.AddService(svc)
 	net.AddServer("server", srv)
-	net.Connect("client", "server")
-	net.Enable("client", true)
-
-	results := make(chan anonbcast.RoundResult)
+	net.Connect("client1", "server")
+	net.Enable("client1", true)
+	net.Connect("client2", "server")
+	net.Enable("client2", true)
 
 	var mu sync.Mutex
 	cg1 := ConfessionsGenerator{
@@ -62,29 +80,34 @@ func main() {
 		mu: &mu,
 	}
 
-	c1 := anonbcast.NewClient(s, cg1, end, results)
-	c2 := anonbcast.NewClient(s, cg2, end, make(chan anonbcast.RoundResult))
+	c1 := anonbcast.NewClient(s, cg1, end1)
+	results := c1.GetResCh()
+	orderedResults := make(chan anonbcast.RoundResult)
+	go resultOrderer(results, orderedResults)
+	c2 := anonbcast.NewClient(s, cg2, end2)
 
 	log.Printf("server: %+v, client 1: %+v, client 2: %+v\n", s, c1, c2)
 
 	for i := 0; ; i++ {
-		time.Sleep(time.Millisecond * 500)
-		fmt.Printf("Starting round %d!\n", i)
-		c1.Start(i)
-		for {
-			r := <-results
-			if r.Round != i { // TODO: this assumes the results are sent in order, which they aren't
-				continue
-			}
-			if r.Succeeded {
-				fmt.Printf("Round %d succeeded! Anonymized broadcast messages are:\n", r.Round)
-				for _, m := range r.Messages {
-					fmt.Printf("\t%s\n", m)
-				}
-			} else {
-				fmt.Printf("Round %d failed :(\n", r.Round)
-			}
-			break
+		time.Sleep(time.Millisecond * 100)
+		err := c1.Start(i)
+		for err != nil {
+			time.Sleep(time.Millisecond * 100)
+			err = c1.Start(i)
 		}
+		fmt.Printf("Starting round %d!\n", i)
+		r := <-orderedResults
+		if r.Round != i {
+			log.Fatalf("round %d not equal to index %d", r.Round, i)
+		}
+		if r.Succeeded {
+			fmt.Printf("Round %d succeeded! Anonymized broadcast messages are:\n", r.Round)
+			for _, m := range r.Messages {
+				fmt.Printf("\t%s\n", m)
+			}
+		} else {
+			fmt.Printf("Round %d failed :(\n", r.Round)
+		}
+
 	}
 }
