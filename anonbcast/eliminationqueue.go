@@ -95,20 +95,22 @@ const (
 // opIndex is a helper function to compare
 func opIndex(op Op) int {
 	switch op.Type() {
-	case PublicKeyOpType:
+	case JoinOpType:
 		return 0
 	case StartOpType:
 		return 1
 	case MessageOpType:
 		return 2
-	case ScrambledOpType:
+	case EncryptedOpType:
 		return 3
-	case DecryptedOpType:
+	case ScrambledOpType:
 		return 4
-	case RevealOpType:
+	case DecryptedOpType:
 		return 5
-	case AbortOpType:
+	case RevealOpType:
 		return 6
+	case AbortOpType:
+		return 7
 	default:
 		assertf(false, "should never happen")
 		return -1
@@ -127,7 +129,7 @@ func compare(a Op, b Op) opComparison {
 	}
 
 	// old -> new
-	// publicKey, start, message, scrambled, decrypted, reveal, abort
+	// join, start, message, encrypted, scrambled, decrypted, reveal, abort
 
 	aIndex := opIndex(a)
 	bIndex := opIndex(b)
@@ -139,8 +141,16 @@ func compare(a Op, b Op) opComparison {
 		return opNewer
 	}
 
-	// we only have internal orderings within the scrambled and decrypted phases
+	// we only have internal orderings within the encrypted, scrambled and decrypted phases
 	switch as := a.(type) {
+	case EncryptedOp:
+		bs := b.(EncryptedOp)
+		if as.Prev < bs.Prev {
+			return opOlder
+		}
+		if as.Prev > bs.Prev {
+			return opNewer
+		}
 	case ScrambledOp:
 		bs := b.(ScrambledOp)
 		if as.Prev < bs.Prev {

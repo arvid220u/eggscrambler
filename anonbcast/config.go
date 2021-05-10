@@ -189,6 +189,17 @@ func (cfg *config) partition(p1 []int, p2 []int) {
 	}
 }
 
+type messageGenerator struct {
+	id string
+	mu *sync.Mutex
+}
+
+func (mg messageGenerator) Message(round int) []byte {
+	mg.mu.Lock()
+	defer mg.mu.Unlock()
+	return []byte(fmt.Sprintf("message in round %d from %s", round, mg.id))
+}
+
 // Create a clerk with clerk specific server names.
 // Give it connections to all of the servers, but for
 // now enable only connections to servers in to[].
@@ -207,7 +218,7 @@ func (cfg *config) makeClient(to []int) *Client {
 
 	// TODO not really sure how to use the mg
 	var mu sync.Mutex
-	mg := MessageGenerator{
+	mg := messageGenerator{
 		id: "1",
 		mu: &mu,
 	}

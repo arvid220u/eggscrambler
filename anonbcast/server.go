@@ -42,9 +42,11 @@ type Server struct {
 }
 
 func NewServer(rf Raft) *Server {
-	labgob.Register(PublicKeyOp{})
+	labgob.Register(fakeCommutativeCrypto{}) // TODO: remove the fake crypto
+	labgob.Register(JoinOp{})
 	labgob.Register(StartOp{})
 	labgob.Register(MessageOp{})
+	labgob.Register(EncryptedOp{})
 	labgob.Register(ScrambledOp{})
 	labgob.Register(DecryptedOp{})
 	labgob.Register(RevealOp{})

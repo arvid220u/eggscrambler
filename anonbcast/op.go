@@ -5,9 +5,10 @@ import "github.com/google/uuid"
 type OpType string
 
 const (
-	PublicKeyOpType OpType = "publicKey"
+	JoinOpType      OpType = "join"
 	StartOpType     OpType = "start"
 	MessageOpType   OpType = "message"
+	EncryptedOpType OpType = "encrypted"
 	ScrambledOpType OpType = "scrambled"
 	DecryptedOpType OpType = "decrypted"
 	RevealOpType    OpType = "reveal"
@@ -22,28 +23,28 @@ type Op interface {
 	Round() int
 }
 
-// PublicKeyOp indicates participation for a participant
-// in a round, and submits their encrypt key pair's public key.
+// JoinOp indicates participation for a participant in a round, submitting their UUID.
 // If Round is not equal to current round, or the current phase isn't PreparePhase, it is a no-op.
-// If the public key for this user has already been submitted, it is overwritten.
-type PublicKeyOp struct {
-	Id        uuid.UUID
-	R         int
-	PublicKey string // TODO: update with public key type
+// If the participant Id has already been submitted, it is a no-op.
+type JoinOp struct {
+	Id uuid.UUID
+	R  int
 }
 
-func (op PublicKeyOp) Type() OpType {
-	return PublicKeyOpType
+func (op JoinOp) Type() OpType {
+	return JoinOpType
 }
-func (op PublicKeyOp) Round() int {
+func (op JoinOp) Round() int {
 	return op.R
 }
 
-// StartOp is transitions from the PreparePhase to the EncryptPhase.
+// StartOp transitions from the PreparePhase to the SubmitPhase.
+// It also submits Crypto to the round, overwriting the value if it exists.
 // If Round is not equal to the current round, or the current phase isn't PreparePhase, it is a no-op.
 type StartOp struct {
-	Id uuid.UUID
-	R  int
+	Id     uuid.UUID
+	R      int
+	Crypto CommutativeCrypto
 }
 
 func (op StartOp) Type() OpType {
@@ -53,11 +54,11 @@ func (op StartOp) Round() int {
 	return op.R
 }
 
-// MessageOp submits a message that has been encrypted once with each participant's public key.
-// If Round is not equal to the current round, or the current phase isn't EncryptPhase, it is a no-op.
+// MessageOp submits a message that has been encrypted once with the participant's own encryption key.
+// If Round is not equal to the current round, or the current phase isn't SubmitPhase, it is a no-op.
 // If a participant with the given Id does not exist, it is a no-op (and logs a warning, because it should never happen with a legal client).
 // If a message for this user has already been submitted, it is overwritten.
-// If this is the last participant to submit a message, the state machine will transition to the ScramblePhase.
+// If this is the last participant to submit a message, the state machine will transition to the EncryptPhase.
 type MessageOp struct {
 	Id      uuid.UUID
 	R       int
@@ -68,6 +69,29 @@ func (op MessageOp) Type() OpType {
 	return MessageOpType
 }
 func (op MessageOp) Round() int {
+	return op.R
+}
+
+// EncryptedOp announces that a participant has encrypted all messages exactly once with its encryption key.
+// If Round is not equal to the current round, or the current phase isn't EncryptPhase, it is a no-op.
+// If a participant with the given Id does not exist, it is a no-op (and logs a warning, because it should never happen with a legal client).
+// If Prev is not the previous number of participants who have encrypted, it is a no-op.
+// If this participant has already encrypted, it is a no-op.
+// If this is the last participant to encrypt, the state machine will transition to the ScramblePhase.
+type EncryptedOp struct {
+	Id uuid.UUID
+	R  int
+	// Messages need to be in same order as before.
+	Messages []Msg
+	// Prev is the number of participants who have previously encrypted.
+	// This supports the test-and-set behavior.
+	Prev int
+}
+
+func (op EncryptedOp) Type() OpType {
+	return EncryptedOpType
+}
+func (op EncryptedOp) Round() int {
 	return op.R
 }
 
@@ -124,7 +148,7 @@ func (op DecryptedOp) Round() int {
 type RevealOp struct {
 	Id        uuid.UUID
 	R         int
-	RevealKey string // TODO: update to crypto keypair type
+	RevealKey PrivateKey
 }
 
 func (op RevealOp) Type() OpType {

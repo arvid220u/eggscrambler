@@ -42,10 +42,10 @@ type MessageGenerator struct {
 	mu *sync.Mutex
 }
 
-func (mg MessageGenerator) Message(round int) string {
+func (mg MessageGenerator) Message(round int) []byte {
 	mg.mu.Lock()
 	defer mg.mu.Unlock()
-	return fmt.Sprintf("message in round %d from %s", round, mg.id)
+	return []byte(fmt.Sprintf("message in round %d from %s", round, mg.id))
 }
 
 func resultOrderer(unorderedResults <-chan RoundResult, orderedResults chan<- RoundResult) {
@@ -65,6 +65,17 @@ func resultOrderer(unorderedResults <-chan RoundResult, orderedResults chan<- Ro
 	}
 }
 
+func equalContentsBytes(b1 [][]byte, b2 [][]byte) bool {
+	var s1 []string
+	for _, b := range b1 {
+		s1 = append(s1, string(b))
+	}
+	var s2 []string
+	for _, b := range b2 {
+		s2 = append(s2, string(b))
+	}
+	return equalContents(s1, s2)
+}
 func equalContents(s1 []string, s2 []string) bool {
 	if len(s1) != len(s2) {
 		return false
@@ -157,9 +168,9 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 		if !r.Succeeded {
 			t.Fatalf("Round %d failed which should not happen", r.Round)
 		}
-		var expectedMessages []string
+		var expectedMessages [][]byte
 		if i%2 == 0 {
-			expectedMessages = []string{mg1.Message(r.Round)}
+			expectedMessages = [][]byte{mg1.Message(r.Round)}
 			sm2 := c2.GetLastStateMachine()
 			for sm2.Round != r.Round+1 {
 				time.Sleep(time.Millisecond * 5)
@@ -178,9 +189,9 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 				}
 			}
 		} else {
-			expectedMessages = []string{mg1.Message(r.Round), mg2.Message(r.Round), mg3.Message(r.Round)}
+			expectedMessages = [][]byte{mg1.Message(r.Round), mg2.Message(r.Round), mg3.Message(r.Round)}
 		}
-		if !equalContents(expectedMessages, r.Messages) {
+		if !equalContentsBytes(expectedMessages, r.Messages) {
 			t.Fatalf("Wrong messages for this round. Expected %v, got %v", expectedMessages, r.Messages)
 		}
 	}

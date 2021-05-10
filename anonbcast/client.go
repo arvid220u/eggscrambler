@@ -1,8 +1,11 @@
 package anonbcast
 
 import (
+	crand "crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 
@@ -10,6 +13,16 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/uuid"
 )
+
+// inspiration: https://stackoverflow.com/a/54491783
+func init() {
+	var b [8]byte
+	_, err := crand.Read(b[:])
+	if err != nil {
+		assertf(false, "cannot seed math/rand, err: %v", err)
+	}
+	rand.Seed(int64(binary.LittleEndian.Uint64(b[:])))
+}
 
 // Client performs the anonymous broadcasting protocol, and exposes the bare minimum of
 // communication necessary for an application to broadcast anonymous messages. A Client
@@ -50,14 +63,14 @@ type RoundResult struct {
 	// and false if in FailedPhase.
 	Succeeded bool
 	// Messages contains all the plaintext messages from this round.
-	Messages []string
+	Messages [][]byte
 }
 
 type Messager interface {
 	// Message returns the message for this participant in the given round.
 	// It may block. If it takes too much time, its return value may be ignored.
 	// (i.e., the protocol has timed out and moved on to the next round)
-	Message(round int) string
+	Message(round int) []byte
 }
 
 // submitOp submits the op to the leader, returning an error if the op is not successfully committed to the
@@ -81,9 +94,13 @@ func (c *Client) sendRoundResult(sm StateMachine, round int) {
 		assertf(false, "must be able to get previous round, error is %v", err)
 	}
 	assertf(ri.Phase == DonePhase || ri.Phase == FailedPhase, "must either fail or done")
-	var messages []string
+	var messages [][]byte
 	for _, m := range ri.Messages {
-		messages = append(messages, string(m)) // TODO: do a ton of decryption here using reveal keys
+		om := m
+		for _, revealKey := range ri.RevealedKeys {
+			om = ri.Crypto.Decrypt(revealKey, om)
+		}
+		messages = append(messages, ri.Crypto.ExtractMsg(om))
 	}
 	result := RoundResult{
 		Round:     round - 1,
@@ -98,31 +115,64 @@ func (c *Client) sendRoundResult(sm StateMachine, round int) {
 // prepare is a helper method to readUpdates
 func (c *Client) prepare(round int, ri *RoundInfo, me int) {
 	if me == -1 {
-		op := PublicKeyOp{
-			Id:        c.Id,
-			R:         round,
-			PublicKey: "public key here!", // TODO: generate a new public key here, and probably all other keys
+		op := JoinOp{
+			Id: c.Id,
+			R:  round,
+		}
+		c.pending.add(op)
+	}
+}
+
+// submit is a helper method to readUpdates
+func (c *Client) submit(round int, ri *RoundInfo, me int, encryptKey PrivateKey) {
+	if ri.Messages[me].Nil() {
+		// TODO: time out here! if Message does not return within X seconds, then use a dummy message
+		msg := c.m.Message(round)
+		m, err := ri.Crypto.PrepareMsg(msg)
+		if err != nil {
+			c.logf("message size too long, using dummy message, %v", err)
+			m, err = ri.Crypto.PrepareMsg([]byte("dummy"))
+			c.assertf(err == nil, "dummy cannot be too long, err: %v", err)
+		}
+		encryptedM := ri.Crypto.Encrypt(encryptKey, m)
+		op := MessageOp{
+			Id:      c.Id,
+			R:       round,
+			Message: encryptedM,
 		}
 		c.pending.add(op)
 	}
 }
 
 // encrypt is a helper method to readUpdates
-func (c *Client) encrypt(round int, ri *RoundInfo, me int) {
-	if ri.Messages[me] == Msg("") { // TODO: update with real nil type for Msg
-		// TODO: time out here! if Message does not return within X seconds, then use a dummy message
-		msg := c.m.Message(round) // TODO: encrypt!
-		op := MessageOp{
-			Id:      c.Id,
-			R:       round,
-			Message: Msg(msg),
+func (c *Client) encrypt(round int, ri *RoundInfo, me int, encryptKey PrivateKey) {
+	if !ri.Encrypted[me] {
+		prev := 0
+		for _, encrypted := range ri.Encrypted {
+			if encrypted {
+				prev++
+			}
+		}
+		var encryptedMessages []Msg
+		for i, m := range ri.Messages {
+			if i == me {
+				encryptedMessages = append(encryptedMessages, m.DeepCopy())
+			} else {
+				encryptedMessages = append(encryptedMessages, ri.Crypto.Encrypt(encryptKey, m))
+			}
+		}
+		op := EncryptedOp{
+			Id:       c.Id,
+			R:        round,
+			Messages: encryptedMessages,
+			Prev:     prev,
 		}
 		c.pending.add(op)
 	}
 }
 
 // scramble is a helper method to readUpdates
-func (c *Client) scramble(round int, ri *RoundInfo, me int) {
+func (c *Client) scramble(round int, ri *RoundInfo, me int, scrambleKey PrivateKey, revealKey PrivateKey) {
 	if !ri.Scrambled[me] {
 		prev := 0
 		for _, scrambled := range ri.Scrambled {
@@ -130,10 +180,21 @@ func (c *Client) scramble(round int, ri *RoundInfo, me int) {
 				prev++
 			}
 		}
+		var scrambledMessages []Msg
+		// first encrypt each message once with each key
+		for _, m := range ri.Messages {
+			m1 := ri.Crypto.Encrypt(scrambleKey, m)
+			m2 := ri.Crypto.Encrypt(revealKey, m1)
+			scrambledMessages = append(scrambledMessages, m2)
+		}
+		// now scramble!
+		rand.Shuffle(len(scrambledMessages), func(i, j int) {
+			scrambledMessages[i], scrambledMessages[j] = scrambledMessages[j], scrambledMessages[i]
+		})
 		op := ScrambledOp{
 			Id:       c.Id,
 			R:        round,
-			Messages: ri.Messages, // TODO: scramble and encrypt!
+			Messages: scrambledMessages,
 			Prev:     prev,
 		}
 		c.pending.add(op)
@@ -141,7 +202,7 @@ func (c *Client) scramble(round int, ri *RoundInfo, me int) {
 }
 
 // decrypt is a helper method to readUpdates
-func (c *Client) decrypt(round int, ri *RoundInfo, me int) {
+func (c *Client) decrypt(round int, ri *RoundInfo, me int, scrambleKey PrivateKey, encryptKey PrivateKey) {
 	if !ri.Decrypted[me] {
 		prev := 0
 		for _, decrypted := range ri.Decrypted {
@@ -149,10 +210,17 @@ func (c *Client) decrypt(round int, ri *RoundInfo, me int) {
 				prev++
 			}
 		}
+		// decrypt each message once with each key
+		var decryptedMessages []Msg
+		for _, m := range ri.Messages {
+			m1 := ri.Crypto.Decrypt(scrambleKey, m)
+			m2 := ri.Crypto.Decrypt(encryptKey, m1)
+			decryptedMessages = append(decryptedMessages, m2)
+		}
 		op := DecryptedOp{
 			Id:       c.Id,
 			R:        round,
-			Messages: ri.Messages, // TODO: decrypt!
+			Messages: decryptedMessages,
 			Prev:     prev,
 		}
 		c.pending.add(op)
@@ -160,12 +228,12 @@ func (c *Client) decrypt(round int, ri *RoundInfo, me int) {
 }
 
 // reveal is a helper method to readUpdates
-func (c *Client) reveal(round int, ri *RoundInfo, me int) {
-	if ri.RevealedKeys[me] == "" { // TODO: check actual nil type here
+func (c *Client) reveal(round int, ri *RoundInfo, me int, revealKey PrivateKey) {
+	if ri.RevealedKeys[me].Nil() {
 		op := RevealOp{
 			Id:        c.Id,
 			R:         round,
-			RevealKey: "reveal key here lol", // TODO: add reveal key
+			RevealKey: revealKey,
 		}
 		c.pending.add(op)
 	}
@@ -177,6 +245,10 @@ func (c *Client) readUpdates() {
 	lastResChSend := -1
 	lastMessageRound := -1
 	version := 0
+	var encryptKey PrivateKey
+	var scrambleKey PrivateKey
+	var revealKey PrivateKey
+	lastKeyGen := -1
 
 	// in this loop, all heavy work is done in goroutines. this is because the server always expects
 	// to be able to send on the updCh.
@@ -208,34 +280,49 @@ func (c *Client) readUpdates() {
 					lastResChSend = round - 1
 				}
 				go c.prepare(round, ri, me)
+			case SubmitPhase:
+				if me == -1 {
+					// we don't have any business in this round
+					continue
+				}
+				if round > lastKeyGen {
+					assertf(lastKeyGen == round-1, "required true because updates are in order")
+					// TODO: verify that ri.Crypto is a sane generator. We may have gotten it from a malicious user!!
+					// 	so verify that the prime is big enough
+					encryptKey = ri.Crypto.GenKey()
+					scrambleKey = ri.Crypto.GenKey()
+					revealKey = ri.Crypto.GenKey()
+					lastKeyGen = round
+				}
+				// we want to make sure that we only ask the user for a message once per round
+				if round > lastMessageRound {
+					go c.submit(round, ri, me, encryptKey.DeepCopy())
+					lastMessageRound = round
+				}
 			case EncryptPhase:
 				if me == -1 {
 					// we don't have any business in this round
 					continue
 				}
-				// we want to make sure that we only ask the user for a message once per round
-				if round > lastMessageRound {
-					go c.encrypt(round, ri, me)
-					lastMessageRound = round
-				}
+				go c.encrypt(round, ri, me, encryptKey.DeepCopy())
 			case ScramblePhase:
 				if me == -1 {
 					// we don't have any business in this round
 					continue
 				}
-				go c.scramble(round, ri, me)
+				go c.scramble(round, ri, me, scrambleKey.DeepCopy(), revealKey.DeepCopy())
 			case DecryptPhase:
 				if me == -1 {
 					// we don't have any business in this round
 					continue
 				}
-				go c.decrypt(round, ri, me)
+				go c.decrypt(round, ri, me, scrambleKey.DeepCopy(), encryptKey.DeepCopy())
 			case RevealPhase:
 				if me == -1 {
 					// we don't have any business in this round
 					continue
 				}
-				go c.reveal(round, ri, me)
+				go c.reveal(round, ri, me, revealKey.DeepCopy())
 			}
 		} else if updMsg.ConfigurationValid {
 			c.logf("Received configuration update: %v", updMsg.Configuration)
@@ -276,6 +363,8 @@ func (c *Client) updateLeader() {
 // may be called.
 func (c *Client) Kill() {
 	atomic.StoreInt32(&c.dead, 1)
+	// TODO: submit an abort operation here if the last state machine includes this user
+	// 	and the round isn't done or failed
 }
 func (c *Client) killed() bool {
 	z := atomic.LoadInt32(&c.dead)
@@ -343,16 +432,14 @@ func (c *Client) Start(round int) error {
 		return errors.New("can only start a round after submitting the public key. please wait")
 	}
 	op := StartOp{
-		Id: c.Id,
-		R:  round,
+		Id:     c.Id,
+		R:      round,
+		Crypto: newFakeCommutativeCrypto(), // TODO: get real commutative crypto here
 	}
 	go c.pending.add(op)
 	return nil
 }
 
-// TODO remove Server from this argument list, but will require a discussion
-// about how to replace the updCh, since we can't use channels over
-// labrpc or the real network.
 func NewClient(s *Server, m Messager, cp network.ConnectionProvider) *Client {
 	c := new(Client)
 	c.Id = uuid.New()

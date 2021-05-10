@@ -1,67 +1,103 @@
 package anonbcast
 
 import (
-	"crypto/rand"
-	"github.com/arvid220u/6.824-project/commutencrypt"
 	"math/big"
 )
 
+type Msg struct {
+	//M *big.Int // cannot be used because it cannot be sent over rpc
+	M []byte
+}
+
+func (m Msg) DeepCopy() Msg {
+	m2 := Msg{make([]byte, len(m.M))}
+	copy(m2.M, m.M)
+	return m2
+}
+
+func (m Msg) Nil() bool {
+	return m.M == nil || len(m.M) == 0
+}
+func NilMsg() Msg {
+	return Msg{}
+}
+
+type PrivateKey struct {
+	Pk int64
+}
+
+func (pk PrivateKey) DeepCopy() PrivateKey {
+	pk2 := PrivateKey{pk.Pk}
+	return pk2
+}
+func NilPrivateKey() PrivateKey {
+	return PrivateKey{}
+}
+func (pk PrivateKey) Nil() bool {
+	return pk.Pk == 0
+}
+
 type CommutativeCrypto interface {
-	// PrepareMsg converts a plaintext message to a plaintext big.Int.
+	// PrepareMsg converts a plaintext message to a plaintext Msg.
 	// Returns an error if the message is too long.
-	PrepareMsg(msg []byte) (*big.Int, error)
+	PrepareMsg(msg []byte) (Msg, error)
 
-	// Encrypt encrypts prevC using pubkey, returning (K, C, error).
-	Encrypt(pubkey *commutencrypt.PublicKey, prevC *big.Int) (*big.Int, *big.Int)
+	// Encrypt encrypts a message
+	Encrypt(key PrivateKey, m Msg) Msg
 
-	// Decrypt decrypts prevD using privkey and K, returning the plaintext.
-	// Returns an error if the private key does not work.
-	Decrypt(privkey *commutencrypt.PrivateKey, K *big.Int, prevD *big.Int) (*big.Int, error)
+	// Decrypt decrypts a message
+	Decrypt(key PrivateKey, m Msg) Msg
 
 	// ExtractMsg reverses PrepareMsg
-	ExtractMsg(D *big.Int) []byte
+	ExtractMsg(m Msg) []byte
 
 	// GenKey generates a private key
-	GenKey() *commutencrypt.PrivateKey
+	GenKey() PrivateKey
+
+	// DeepCopy copies itself, to avoid race conditions
+	DeepCopy() CommutativeCrypto
 }
 
-type commutEncrypt struct {
-	syskey *commutencrypt.SystemKey
+// replace later! just to mock, and probably not a useful mock in the future
+type fakeCommutativeCrypto struct {
+	P int64
 }
 
-func (c *commutEncrypt) PrepareMsg(msg []byte) (*big.Int, error) {
-	return commutencrypt.PrepareMsg(msg, c.syskey.P.BitLen())
+func (f fakeCommutativeCrypto) PrepareMsg(msg []byte) (Msg, error) {
+	var m Msg
+	m.M = msg
+	return m, nil
 }
 
-func (c *commutEncrypt) Encrypt(pubkey *commutencrypt.PublicKey, prevC *big.Int) (*big.Int, *big.Int) {
-	K, C, err := commutencrypt.Encrypt(rand.Reader, pubkey, prevC)
-	if err != nil {
-		assertf(false, "don't know what to do when encrypt fails: %v", err)
-	}
-	return K, C
+func (f fakeCommutativeCrypto) Encrypt(key PrivateKey, m Msg) Msg {
+	// + is commutative lolol
+	b := new(big.Int)
+	b2 := new(big.Int)
+	b2.SetBytes(m.M)
+	b.Add(b2, big.NewInt(key.Pk))
+	return Msg{b.Bytes()}
 }
 
-func (c *commutEncrypt) Decrypt(privkey *commutencrypt.PrivateKey, K *big.Int, prevD *big.Int) (*big.Int, error) {
-	return commutencrypt.Decrypt(privkey, K, prevD)
+func (f fakeCommutativeCrypto) Decrypt(key PrivateKey, m Msg) Msg {
+	b := new(big.Int)
+	b2 := new(big.Int)
+	b2.SetBytes(m.M)
+	b.Sub(b2, big.NewInt(key.Pk))
+	return Msg{b.Bytes()}
 }
 
-func (c *commutEncrypt) ExtractMsg(D *big.Int) []byte {
-	return commutencrypt.ExtractMsg(D)
+func (f fakeCommutativeCrypto) ExtractMsg(m Msg) []byte {
+	return m.M
 }
 
-func (c *commutEncrypt) GenKey() *commutencrypt.PrivateKey {
-	privkey, err := commutencrypt.GenUserKey(rand.Reader, c.syskey)
-	if err != nil {
-		assertf(false, "don't know what to do when key gen fails: %v", err)
-	}
-	return privkey
+func (f fakeCommutativeCrypto) GenKey() PrivateKey {
+	return PrivateKey{f.P}
 }
 
-func newCommutEncrypt() *commutEncrypt {
-	// TODO: set max length?
-	syskey, err := commutencrypt.GenSysKey(rand.Reader, 140)
-	if err != nil {
-		assertf(false, "error is %v, don't know what to do", err)
-	}
-	return &commutEncrypt{syskey}
+func (f fakeCommutativeCrypto) DeepCopy() CommutativeCrypto {
+	return f
+}
+
+func newFakeCommutativeCrypto() CommutativeCrypto {
+	return fakeCommutativeCrypto{P: 17}
 }

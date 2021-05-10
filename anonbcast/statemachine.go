@@ -10,6 +10,7 @@ type Phase string
 
 const (
 	PreparePhase  Phase = "PREPARE"
+	SubmitPhase   Phase = "SUBMIT"
 	EncryptPhase  Phase = "ENCRYPT"
 	ScramblePhase Phase = "SCRAMBLE"
 	DecryptPhase  Phase = "DECRYPT"
@@ -19,11 +20,6 @@ const (
 )
 
 const NumRoundsPersisted = 3
-
-// Msg is the type of the message
-// TODO: change this to the output of the crypto algo!
-// MUST exhibit pass-by-value semantics, or else DeepCopy need to be updated
-type Msg string
 
 // StateMachine is the shared state machine that records the state of
 // the anonymous broadcasting protocol. It is NOT thread safe.
@@ -49,32 +45,36 @@ func (sm *StateMachine) checkRep() {
 type RoundInfo struct {
 	// Phase is the phase that the round is in.
 	Phase Phase
+	// Crypto is an object that allows us to do consistent commutative encryption. It is typically a big prime.
+	Crypto CommutativeCrypto
 	// Participants is a list of uuids for every participant, uniquely identifying them
 	Participants []uuid.UUID
-	// PublicKeys[i] is the public key of the encrypt keypair of participant Participants[i]
-	PublicKeys []string // TODO: update this to the actual type of public keys
 	// Messages is a list of messages, should have same length as Participants. If participant i
 	// hasn't sent in a message yet, Messages[i] is the null value (i.e. "")
 	// The messages change over the course of the progress of the protocol.
 	Messages []Msg
+	// Encrypted[i] is true if and only if participant Participants[i] has encrypted the messages
+	Encrypted []bool
 	// Scrambled[i] is true if and only if participant Participants[i] has scrambled the messages
 	Scrambled []bool
 	// Decrypted[i] is true if and only if participant Participants[i] has decrypted the messages
 	Decrypted []bool
 	// RevealedKeys[i] is the public/private reveal keypair of participant Participants[i],
 	// or the nil value of the type if the participant has yet to submit it
-	RevealedKeys []string // TODO: update this to the actual type of the public/private keypair
+	RevealedKeys []PrivateKey
 }
 
 func (ri *RoundInfo) checkRep() {
 	if !IsDebug() {
 		return
 	}
-	assertf(len(ri.Participants) == len(ri.PublicKeys), "must be equally many participants as public keys!")
 	assertf(len(ri.Participants) == len(ri.Messages), "must be equally many participants for each field!")
+	assertf(len(ri.Participants) == len(ri.Encrypted), "must be equally many participants for each field!")
 	assertf(len(ri.Participants) == len(ri.Scrambled), "must be equally many participants for each field!")
 	assertf(len(ri.Participants) == len(ri.Decrypted), "must be equally many participants for each field!")
 	assertf(len(ri.Participants) == len(ri.RevealedKeys), "must be equally many participants for each field!")
+	assertf(ri.Phase == "" || ri.Phase == PreparePhase || ri.Crypto != nil, "crypto must not be nil if left prepare phase")
+	assertf(ri.Phase != PreparePhase || ri.Crypto == nil, "crypto must be nil if not left prepare phase")
 
 	for i1, p1 := range ri.Participants {
 		for i2, p2 := range ri.Participants {
@@ -100,12 +100,14 @@ func (sm *StateMachine) Apply(op Op) bool {
 	}
 
 	switch op.Type() {
-	case PublicKeyOpType:
-		return sm.publicKey(op.(PublicKeyOp))
+	case JoinOpType:
+		return sm.join(op.(JoinOp))
 	case StartOpType:
 		return sm.start(op.(StartOp))
 	case MessageOpType:
 		return sm.message(op.(MessageOp))
+	case EncryptedOpType:
+		return sm.encrypted(op.(EncryptedOp))
 	case ScrambledOpType:
 		return sm.scrambled(op.(ScrambledOp))
 	case DecryptedOpType:
@@ -120,25 +122,24 @@ func (sm *StateMachine) Apply(op Op) bool {
 	}
 }
 
-func (sm *StateMachine) publicKey(op PublicKeyOp) bool {
+func (sm *StateMachine) join(op JoinOp) bool {
 	ri := sm.CurrentRoundInfo()
 	if ri.Phase != PreparePhase {
 		return false
 	}
 
-	p, err := ri.participantIndex(op.Id)
+	_, err := ri.participantIndex(op.Id)
 	if err != nil {
-		p = len(ri.Participants)
 		ri.Participants = append(ri.Participants, op.Id)
-		ri.PublicKeys = append(ri.PublicKeys, "")
-		ri.Messages = append(ri.Messages, Msg(""))
+		ri.Messages = append(ri.Messages, NilMsg())
+		ri.Encrypted = append(ri.Encrypted, false)
 		ri.Scrambled = append(ri.Scrambled, false)
 		ri.Decrypted = append(ri.Decrypted, false)
-		ri.RevealedKeys = append(ri.RevealedKeys, "")
+		ri.RevealedKeys = append(ri.RevealedKeys, NilPrivateKey())
+		return true
+	} else {
+		return false
 	}
-
-	ri.PublicKeys[p] = op.PublicKey
-	return true
 }
 
 func (sm *StateMachine) start(op StartOp) bool {
@@ -147,7 +148,8 @@ func (sm *StateMachine) start(op StartOp) bool {
 		return false
 	}
 
-	ri.Phase = EncryptPhase
+	ri.Phase = SubmitPhase
+	ri.Crypto = op.Crypto
 	return true
 }
 
@@ -162,23 +164,63 @@ func (ri *RoundInfo) participantIndex(id uuid.UUID) (int, error) {
 
 func (sm *StateMachine) message(op MessageOp) bool {
 	ri := sm.CurrentRoundInfo()
-	if ri.Phase != EncryptPhase {
+	if ri.Phase != SubmitPhase {
 		return false
 	}
 	p, err := ri.participantIndex(op.Id)
 	if err != nil {
 		DPrintf("WARNING: participant %v not found for message op, which should never happen with a legal client", op.Id)
+		return false
 	}
 
 	ri.Messages[p] = op.Message
 
 	for _, m := range ri.Messages {
-		if m == Msg("") { // TODO: update with real nil type for Msg
+		if m.Nil() {
 			return true
 		}
 	}
 
-	ri.Phase = ScramblePhase
+	ri.Phase = EncryptPhase
+	return true
+}
+
+func (ri *RoundInfo) numEncrypted() int {
+	n := 0
+	for _, s := range ri.Encrypted {
+		if s {
+			n++
+		}
+	}
+	return n
+}
+
+func (sm *StateMachine) encrypted(op EncryptedOp) bool {
+	ri := sm.CurrentRoundInfo()
+	if ri.Phase != EncryptPhase {
+		return false
+	}
+	p, err := ri.participantIndex(op.Id)
+	if err != nil {
+		DPrintf("WARNING: participant %v not found for encrypted op, which should never happen with a legal client", op.Id)
+		return false
+	}
+
+	if ri.numEncrypted() != op.Prev {
+		return false
+	}
+
+	if ri.Encrypted[p] {
+		return false
+	}
+
+	ri.Messages = op.Messages
+	ri.Encrypted[p] = true
+
+	if ri.numEncrypted() == len(ri.Encrypted) {
+		ri.Phase = ScramblePhase
+	}
+
 	return true
 }
 
@@ -200,6 +242,7 @@ func (sm *StateMachine) scrambled(op ScrambledOp) bool {
 	p, err := ri.participantIndex(op.Id)
 	if err != nil {
 		DPrintf("WARNING: participant %v not found for scrambled op, which should never happen with a legal client", op.Id)
+		return false
 	}
 
 	if ri.numScrambled() != op.Prev {
@@ -237,7 +280,8 @@ func (sm *StateMachine) decrypted(op DecryptedOp) bool {
 	}
 	p, err := ri.participantIndex(op.Id)
 	if err != nil {
-		DPrintf("WARNING: participant %v not found for scrambled op, which should never happen with a legal client", op.Id)
+		DPrintf("WARNING: participant %v not found for decrypted op, which should never happen with a legal client", op.Id)
+		return false
 	}
 
 	if ri.numDecrypted() != op.Prev {
@@ -265,13 +309,14 @@ func (sm *StateMachine) reveal(op RevealOp) bool {
 	}
 	p, err := ri.participantIndex(op.Id)
 	if err != nil {
-		DPrintf("WARNING: participant %v not found for scrambled op, which should never happen with a legal client", op.Id)
+		DPrintf("WARNING: participant %v not found for reveal op, which should never happen with a legal client", op.Id)
+		return false
 	}
 
 	ri.RevealedKeys[p] = op.RevealKey
 
 	for _, k := range ri.RevealedKeys {
-		if k == "" { // TODO: update to actual nil value of revealed key
+		if k.Nil() {
 			return true
 		}
 	}
@@ -349,19 +394,27 @@ func (ri RoundInfo) DeepCopy() RoundInfo {
 	n := len(ri.Participants)
 	riCopy := RoundInfo{
 		Phase:        ri.Phase,
+		Crypto:       nil,
 		Participants: make([]uuid.UUID, n),
-		PublicKeys:   make([]string, n),
 		Messages:     make([]Msg, n),
+		Encrypted:    make([]bool, n),
 		Scrambled:    make([]bool, n),
 		Decrypted:    make([]bool, n),
-		RevealedKeys: make([]string, n),
+		RevealedKeys: make([]PrivateKey, n),
+	}
+	if ri.Crypto != nil {
+		riCopy.Crypto = ri.Crypto.DeepCopy()
 	}
 	copy(riCopy.Participants, ri.Participants)
-	copy(riCopy.PublicKeys, ri.PublicKeys)
-	copy(riCopy.Messages, ri.Messages)
+	for i, msg := range ri.Messages {
+		riCopy.Messages[i] = msg.DeepCopy()
+	}
+	copy(riCopy.Encrypted, ri.Encrypted)
 	copy(riCopy.Scrambled, ri.Scrambled)
 	copy(riCopy.Decrypted, ri.Decrypted)
-	copy(riCopy.RevealedKeys, ri.RevealedKeys)
+	for i, pk := range ri.RevealedKeys {
+		riCopy.RevealedKeys[i] = pk.DeepCopy()
+	}
 	return riCopy
 }
 

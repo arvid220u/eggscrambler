@@ -21,7 +21,7 @@ type ConfessionsGenerator struct {
 	mu *sync.Mutex
 }
 
-func (cg ConfessionsGenerator) Message(round int) string {
+func (cg ConfessionsGenerator) Message(round int) []byte {
 	cg.mu.Lock()
 	defer cg.mu.Unlock()
 	reader := bufio.NewReader(os.Stdin)
@@ -31,7 +31,7 @@ func (cg ConfessionsGenerator) Message(round int) string {
 		log.Fatalf("err: %v", err)
 	}
 	msg = strings.TrimSuffix(msg, "\n")
-	return msg
+	return []byte(msg)
 }
 
 func resultOrderer(unorderedResults <-chan anonbcast.RoundResult, orderedResults chan<- anonbcast.RoundResult) {
@@ -108,7 +108,7 @@ func main() {
 		if r.Succeeded {
 			fmt.Printf("Round %d succeeded! Anonymized broadcast messages are:\n", r.Round)
 			for _, m := range r.Messages {
-				fmt.Printf("\t%s\n", m)
+				fmt.Printf("\t%s\n", string(m))
 			}
 		} else {
 			fmt.Printf("Round %d failed :(\n", r.Round)
