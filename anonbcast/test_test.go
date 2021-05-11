@@ -2,7 +2,6 @@ package anonbcast
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -17,7 +16,7 @@ import (
 func TestServerMockraftNoFailures(t *testing.T) {
 	applyCh := make(chan raft.ApplyMsg)
 	rf := mockraft.New(applyCh)
-	s := NewServer(rf)
+	s := NewServer(0, rf)
 
 	updCh := s.GetUpdCh()
 
@@ -48,24 +47,7 @@ func (mg MessageGenerator) Message(round int) []byte {
 	return []byte(fmt.Sprintf("message in round %d from %s", round, mg.id))
 }
 
-func resultOrderer(unorderedResults <-chan RoundResult, orderedResults chan<- RoundResult) {
-	var results []RoundResult
-	applyIndex := 0
-	for {
-		r := <-unorderedResults
-		for len(results) <= r.Round {
-			results = append(results, RoundResult{Round: -1})
-		}
-		results[r.Round] = r
-
-		for applyIndex < len(results) && results[applyIndex].Round != -1 {
-			orderedResults <- results[applyIndex]
-			applyIndex++
-		}
-	}
-}
-
-func equalContentsBytes(b1 [][]byte, b2 [][]byte) bool {
+/*func equalContentsBytes(b1 [][]byte, b2 [][]byte) bool {
 	var s1 []string
 	for _, b := range b1 {
 		s1 = append(s1, string(b))
@@ -75,8 +57,9 @@ func equalContentsBytes(b1 [][]byte, b2 [][]byte) bool {
 		s2 = append(s2, string(b))
 	}
 	return equalContents(s1, s2)
-}
-func equalContents(s1 []string, s2 []string) bool {
+}*/
+
+/*func equalContents(s1 []string, s2 []string) bool {
 	if len(s1) != len(s2) {
 		return false
 	}
@@ -93,12 +76,12 @@ func equalContents(s1 []string, s2 []string) bool {
 		}
 	}
 	return true
-}
+}*/
 
 func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	applyCh := make(chan raft.ApplyMsg)
 	rf := mockraft.New(applyCh)
-	s := NewServer(rf)
+	s := NewServer(0, rf)
 
 	net := labrpc.MakeNetwork()
 	defer net.Cleanup()
@@ -137,7 +120,8 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	c1 := NewClient(s, mg1, cp1)
 	results := c1.GetResCh()
 	orderedResults := make(chan RoundResult)
-	go resultOrderer(results, orderedResults)
+	ro := &resultOrderer{}
+	go ro.order(results, orderedResults)
 	c2 := NewClient(s, mg2, cp2)
 	c3 := NewClient(s, mg3, cp3)
 
@@ -196,6 +180,7 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 		}
 	}
 
+	ro.kill()
 	c1.Kill()
 	c2.Kill()
 	c3.Kill()
@@ -203,4 +188,19 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	s.Kill()
+}
+
+func TestRaftSimple(t *testing.T) {
+	cfg := make_config(t, 3, false, -1)
+	defer cfg.cleanup()
+	cfg.begin("Sample Text")
+	time.Sleep(3 * time.Second)
+
+	round := 0
+	for i := 0; i < 5; i++ {
+		round = cfg.oneRound(round) + 1
+		time.Sleep(5 * time.Second)
+	}
+
+	cfg.end()
 }

@@ -25,6 +25,7 @@ type UpdateMsg struct {
 // that can be consumed by a local Client for reading the latest state.
 type Server struct {
 	rf Raft
+	me int
 
 	dead int32 // set by Kill(), not protected by mu
 
@@ -41,7 +42,7 @@ type Server struct {
 	resps RespChannels // protected by mu
 }
 
-func NewServer(rf Raft) *Server {
+func NewServer(me int, rf Raft) *Server {
 	labgob.Register(fakeCommutativeCrypto{}) // TODO: remove the fake crypto
 	labgob.Register(JoinOp{})
 	labgob.Register(StartOp{})
@@ -53,6 +54,7 @@ func NewServer(rf Raft) *Server {
 	labgob.Register(AbortOp{})
 
 	s := new(Server)
+	s.me = me
 	s.rf = rf
 	s.sm = NewStateMachine(nil)
 	s.applyCh = rf.GetApplyCh()
@@ -67,7 +69,7 @@ func NewServer(rf Raft) *Server {
 func MakeServer(cp network.ConnectionProvider, me int, initialCfg map[int]bool, persister *raft.Persister, maxraftstate int) *Server {
 	applyCh := make(chan raft.ApplyMsg, 1)
 	rf := raft.Make(cp, me, initialCfg, persister, applyCh, false)
-	return NewServer(rf)
+	return NewServer(me, rf)
 }
 
 type Err string
@@ -181,12 +183,12 @@ func (s *Server) killed() bool {
 }
 
 func (s *Server) logf(format string, a ...interface{}) {
-	logHeader := fmt.Sprintf("[server ?] ")
+	logHeader := fmt.Sprintf("[server %d] ", s.me)
 	DPrintf(logHeader+format, a...)
 }
 
 func (s *Server) assertf(condition bool, format string, a ...interface{}) {
-	logHeader := fmt.Sprintf("[server ?] ")
+	logHeader := fmt.Sprintf("[server %d] ", s.me)
 	dump := ""
 	if IsDump() {
 		dump = "\n\n" + spew.Sdump(s)

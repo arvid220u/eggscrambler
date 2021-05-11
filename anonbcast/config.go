@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"math/rand"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/arvid220u/6.824-project/labrpc"
 	"github.com/arvid220u/6.824-project/network"
 	"github.com/arvid220u/6.824-project/raft"
+	"github.com/google/uuid"
 )
 
 func randstring(n int) string {
@@ -45,6 +47,10 @@ func random_handles(kvh []*labrpc.ClientEnd) []*labrpc.ClientEnd {
 	return sa
 }
 
+type resultOrderer struct {
+	dead int32
+}
+
 type config struct {
 	mu           sync.Mutex
 	t            *testing.T
@@ -54,13 +60,45 @@ type config struct {
 	saved        []*raft.Persister
 	endnames     [][]string // names of each server's sending ClientEnds
 	clients      map[*Client][]string
-	nextClientId int
 	maxraftstate int
 	start        time.Time // time at which make_config() was called
 	// begin()/end() statistics
 	t0    time.Time // time at which test_test.go called cfg.begin()
 	rpcs0 int       // rpcTotal() at start of test
 	ops   int32     // number of clerk get/put/append method calls
+
+	orderedClientIds []uuid.UUID //client ids, where index corresponds to client's server
+	orderedMessagers []Messager  // messager, where index corresponds to messager's client's server
+}
+
+func (ro *resultOrderer) kill() {
+	atomic.StoreInt32(&ro.dead, 1)
+}
+
+func (ro *resultOrderer) killed() bool {
+	z := atomic.LoadInt32(&ro.dead)
+	return z == 1
+}
+
+func (ro *resultOrderer) order(unorderedResults <-chan RoundResult, orderedResults chan<- RoundResult) {
+	var results []RoundResult
+	applyIndex := 0
+	for !ro.killed() {
+		select {
+		case r := <-unorderedResults:
+			for len(results) <= r.Round {
+				results = append(results, RoundResult{Round: -1})
+			}
+			results[r.Round] = r
+
+			for applyIndex < len(results) && results[applyIndex].Round != -1 {
+				orderedResults <- results[applyIndex]
+				applyIndex++
+			}
+		case <-time.After(5 * time.Millisecond):
+		}
+
+	}
 }
 
 func (cfg *config) checkTimeout() {
@@ -78,6 +116,11 @@ func (cfg *config) cleanup() {
 			cfg.servers[i].Kill()
 		}
 	}
+
+	for cl := range cfg.clients {
+		cl.Kill()
+	}
+
 	cfg.net.Cleanup()
 	cfg.checkTimeout()
 }
@@ -203,7 +246,8 @@ func (mg messageGenerator) Message(round int) []byte {
 // Create a clerk with clerk specific server names.
 // Give it connections to all of the servers, but for
 // now enable only connections to servers in to[].
-func (cfg *config) makeClient(to []int) *Client {
+// Client is assumed to be running on the same machine as localSrv
+func (cfg *config) makeClient(m Messager, localSrv int, to []int) *Client {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
 
@@ -216,16 +260,9 @@ func (cfg *config) makeClient(to []int) *Client {
 		cfg.net.Connect(endnames[j], j)
 	}
 
-	// TODO not really sure how to use the mg
-	var mu sync.Mutex
-	mg := messageGenerator{
-		id: "1",
-		mu: &mu,
-	}
 	cp := network.New(random_handles(ends))
-	cl := NewClient(cfg.servers[0], mg, cp)
+	cl := NewClient(cfg.servers[localSrv], m, cp)
 	cfg.clients[cl] = endnames
-	cfg.nextClientId++
 	cfg.ConnectClientUnlocked(cl, to)
 	return cl
 }
@@ -346,6 +383,17 @@ func (cfg *config) StartServer(i int) {
 	srv.AddService(anonsvc)
 	srv.AddService(rfsvc)
 	cfg.net.AddServer(i, srv)
+
+	var mu sync.Mutex
+	mg := messageGenerator{
+		id: fmt.Sprint(i),
+		mu: &mu,
+	}
+	cfg.orderedMessagers[i] = &mg
+
+	cl := cfg.makeClient(mg, i, cfg.All())
+	cfg.orderedClientIds[i] = cl.Id
+
 }
 
 func (cfg *config) Leader() (bool, int) {
@@ -399,9 +447,10 @@ func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config
 	cfg.saved = make([]*raft.Persister, cfg.n)
 	cfg.endnames = make([][]string, cfg.n)
 	cfg.clients = make(map[*Client][]string)
-	cfg.nextClientId = cfg.n + 1000 // client ids start 1000 above the highest serverid
 	cfg.maxraftstate = maxraftstate
 	cfg.start = time.Now()
+	cfg.orderedClientIds = make([]uuid.UUID, cfg.n)
+	cfg.orderedMessagers = make([]Messager, cfg.n)
 
 	// create a full set of KV servers.
 	for i := 0; i < cfg.n; i++ {
@@ -448,4 +497,126 @@ func (cfg *config) end() {
 		fmt.Printf("  ... Passed --")
 		fmt.Printf("  %4.1f  %d %5d %4d\n", t, npeers, nrpc, ops)
 	}
+}
+
+// Assuming at least 1 client has been created using the default generator,
+// completes one broadcast round
+// Returns the current round at the end of the process.
+func (cfg *config) oneRound(round int) int {
+	c1Id := cfg.orderedClientIds[0]
+	mg1 := cfg.orderedMessagers[0]
+
+	var c1 *Client
+	for cl := range cfg.clients {
+		if cl.Id == c1Id {
+			c1 = cl
+			break
+		}
+	}
+
+	results := c1.GetResCh()
+	orderedResults := make(chan RoundResult)
+	ro := &resultOrderer{}
+	defer ro.kill()
+	go ro.order(results, orderedResults)
+	for i := 0; i < 2; i++ {
+		actualRound := round + i
+		fmt.Printf("XXX Starting round %d\n", actualRound) // TODO remove
+
+		if i%2 == 0 {
+			// race to the start
+			err := c1.Start(actualRound)
+			for err != nil {
+				time.Sleep(time.Millisecond * 1)
+				err = c1.Start(actualRound)
+			}
+
+			fmt.Printf("XXX Successful Start 1\n")
+		} else {
+			// wait for everyone to submit :)
+			sm1 := c1.GetLastStateMachine()
+			for sm1.Round != actualRound || len(sm1.CurrentRoundInfo().Participants) < cfg.n {
+				fmt.Printf("XXX 1 Waiting for actual round %d: %d or participants: %d\n", actualRound, sm1.Round, sm1.CurrentRoundInfo().Participants)
+				time.Sleep(time.Millisecond * 5)
+				sm1 = c1.GetLastStateMachine()
+			}
+			err := c1.Start(actualRound)
+			if err != nil {
+				cfg.t.Fatalf("problem occurred in start should never happen: %v", err)
+			}
+			fmt.Printf("XXX Successful Start 2\n")
+		}
+		r := <-orderedResults
+
+		fmt.Printf("XXX Got results\n")
+
+		if r.Round != actualRound {
+			cfg.t.Fatalf("Round %d not equal to round %d", r.Round, actualRound)
+		}
+		if !r.Succeeded {
+			cfg.t.Fatalf("Round %d failed which should not happen", r.Round)
+		}
+		var expectedMessages [][]byte
+		if i%2 == 0 {
+			expectedMessages = [][]byte{mg1.Message(r.Round)}
+			sm1 := c1.GetLastStateMachine()
+			for sm1.Round != r.Round+1 {
+				fmt.Printf("XXX 1 Waiting for actual round %d: %d\n", r.Round+1, sm1.Round)
+				time.Sleep(time.Millisecond * 5)
+				sm1 = c1.GetLastStateMachine()
+			}
+			ri, err := sm1.GetRoundInfo(r.Round)
+			if err != nil {
+				cfg.t.Fatalf("error getting round info: %v", err)
+			}
+			for _, p := range ri.Participants {
+				for j, id := range cfg.orderedClientIds {
+					if p == id && id != c1Id {
+						mgj := cfg.orderedMessagers[j]
+						expectedMessages = append(expectedMessages, mgj.Message(r.Round))
+					}
+				}
+			}
+		} else {
+			expectedMessages = make([][]byte, 0)
+			for _, mgj := range cfg.orderedMessagers {
+				expectedMessages = append(expectedMessages, mgj.Message(r.Round))
+			}
+		}
+		if !equalContentsBytes(expectedMessages, r.Messages) {
+			cfg.t.Fatalf("Wrong messages for this round. Expected %v, got %v", expectedMessages, r.Messages)
+		}
+	}
+	return round + 1
+}
+
+func equalContentsBytes(b1 [][]byte, b2 [][]byte) bool {
+	var s1 []string
+	for _, b := range b1 {
+		s1 = append(s1, string(b))
+	}
+	var s2 []string
+	for _, b := range b2 {
+		s2 = append(s2, string(b))
+	}
+	return equalContents(s1, s2)
+}
+
+func equalContents(s1 []string, s2 []string) bool {
+	if len(s1) != len(s2) {
+		return false
+	}
+	s1c := make([]string, len(s1))
+	copy(s1c, s1)
+	s2c := make([]string, len(s2))
+	copy(s2c, s2)
+	sort.Strings(s1c)
+	sort.Strings(s2c)
+
+	for i, c1 := range s1c {
+		if c1 != s2c[i] {
+			return false
+		}
+	}
+	return true
 }

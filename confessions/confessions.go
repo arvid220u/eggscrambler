@@ -57,7 +57,7 @@ func main() {
 	fmt.Println("welcome to the fully anonymous MIT confessions!")
 	applyCh := make(chan raft.ApplyMsg)
 	rf := mockraft.New(applyCh)
-	s := anonbcast.NewServer(rf)
+	s := anonbcast.NewServer(0, rf)
 
 	net := labrpc.MakeNetwork()
 	defer net.Cleanup()
