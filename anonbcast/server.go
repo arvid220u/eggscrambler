@@ -24,8 +24,8 @@ type UpdateMsg struct {
 // can be called by a Client on a different machine, and exposes a channel
 // that can be consumed by a local Client for reading the latest state.
 type Server struct {
+	Me int
 	rf Raft
-	me int
 
 	dead int32 // set by Kill(), not protected by mu
 
@@ -54,7 +54,7 @@ func NewServer(me int, rf Raft) *Server {
 	labgob.Register(AbortOp{})
 
 	s := new(Server)
-	s.me = me
+	s.Me = me
 	s.rf = rf
 	s.sm = NewStateMachine(nil)
 	s.applyCh = rf.GetApplyCh()
@@ -79,11 +79,11 @@ const (
 	ErrWrongLeader = "ErrWrongLeader"
 )
 
-type RpcReply struct {
+type OpRpcReply struct {
 	Err Err
 }
 
-func (s *Server) IsLeader(args interface{}, reply *RpcReply) {
+func (s *Server) IsLeader(args interface{}, reply *OpRpcReply) {
 	if _, isLeader := s.rf.GetState(); isLeader {
 		reply.Err = OK
 	} else {
@@ -95,7 +95,7 @@ func (s *Server) IsLeader(args interface{}, reply *RpcReply) {
 // Returns OK if this operation shouldn't be retried (because it has been committed or
 // because it is a no-op), and ErrWrongLeader if the operation should be submitted
 // to another server that might be the leader.
-func (s *Server) SubmitOp(args *Op, reply *RpcReply) {
+func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.logf("SubmitOp called with args: %v", *args)
@@ -183,12 +183,12 @@ func (s *Server) killed() bool {
 }
 
 func (s *Server) logf(format string, a ...interface{}) {
-	logHeader := fmt.Sprintf("[server %d] ", s.me)
+	logHeader := fmt.Sprintf("[server %d] ", s.Me)
 	DPrintf(logHeader+format, a...)
 }
 
 func (s *Server) assertf(condition bool, format string, a ...interface{}) {
-	logHeader := fmt.Sprintf("[server %d] ", s.me)
+	logHeader := fmt.Sprintf("[server %d] ", s.Me)
 	dump := ""
 	if IsDump() {
 		dump = "\n\n" + spew.Sdump(s)
@@ -202,8 +202,6 @@ func (s *Server) dump() {
 		s.logf(spew.Sdump(s))
 	}
 }
-
-// TODO: add some RPCs for configuration changes?
 
 // GetUpdCh returns a channel on which the server will send a copy of the state machine
 // every time it updates. This method can be called multiple times; in that case, it will

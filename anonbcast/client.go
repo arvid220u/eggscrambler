@@ -33,6 +33,10 @@ type Client struct {
 	// Immutable.
 	Id uuid.UUID
 
+	// Id of the underlying state machine server.
+	// Used for the client to make configuration changes.
+	serverId int
+
 	// dead indicates whether the client is alive. Set by Kill()
 	dead int32
 	mu   sync.Mutex
@@ -45,6 +49,11 @@ type Client struct {
 
 	updCh <-chan UpdateMsg
 
+	// Indicates whether the underlying raft server
+	// is in the configuration or not
+	active bool
+	//Indicates whether client is actively trying to leave configuration
+	leaving            bool
 	cp                 network.ConnectionProvider
 	currConf           []int
 	lastKnownLeaderInd int
@@ -76,8 +85,10 @@ type Messager interface {
 // submitOp submits the op to the leader, returning an error if the op is not successfully committed to the
 // leader's log. It does not retry on failure.
 func (c *Client) submitOp(op Op) error {
-	var reply RpcReply
+	var reply OpRpcReply
+	c.mu.Lock()
 	ok := c.cp.Call(c.currConf[c.lastKnownLeaderInd], "Server.SubmitOp", &op, &reply)
+	c.mu.Unlock()
 	if !ok {
 		return errors.New("No response")
 	}
@@ -279,9 +290,15 @@ func (c *Client) readUpdates() {
 					go c.sendRoundResult(sm, round)
 					lastResChSend = round - 1
 				}
+
+				//only join round if we're in the raft configuration and not actively trying to leave it
+				if c.active && !c.leaving {
+					continue
+				}
+
 				go c.prepare(round, ri, me)
 			case SubmitPhase:
-				if me == -1 {
+				if !c.active || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
@@ -300,25 +317,25 @@ func (c *Client) readUpdates() {
 					lastMessageRound = round
 				}
 			case EncryptPhase:
-				if me == -1 {
+				if !c.active || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
 				go c.encrypt(round, ri, me, encryptKey.DeepCopy())
 			case ScramblePhase:
-				if me == -1 {
+				if !c.active || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
 				go c.scramble(round, ri, me, scrambleKey.DeepCopy(), revealKey.DeepCopy())
 			case DecryptPhase:
-				if me == -1 {
+				if !c.active || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
 				go c.decrypt(round, ri, me, scrambleKey.DeepCopy(), encryptKey.DeepCopy())
 			case RevealPhase:
-				if me == -1 {
+				if !c.active || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
@@ -327,6 +344,15 @@ func (c *Client) readUpdates() {
 		} else if updMsg.ConfigurationValid {
 			c.logf("Received configuration update: %v", updMsg.Configuration)
 			c.mu.Lock()
+			if _, ok := updMsg.Configuration[c.serverId]; ok {
+				// we're in the configuration
+				c.active = true
+			} else {
+				// we're not in the configuration
+				c.active = false
+				c.leaving = false
+			}
+
 			c.currConf = mapToSlice(updMsg.Configuration)
 			assertf(len(c.currConf) > 0, "Expected configuration with at least 1 server, but none found: %v", updMsg.Configuration)
 			c.lastKnownLeaderInd = 0 // reset this to avoid OOB errors
@@ -449,12 +475,21 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider) *Client {
 	c.cp = cp
 	c.currConf = make([]int, 0)
 	c.updCh = s.GetUpdCh()
+	c.serverId = s.Me
+	c.active = true // TODO set this to false on init after testing.
+	c.leaving = false
 
 	// Assume the configuration has all possible servers, until we get notified otherwise
 	peers := cp.NumPeers()
 	for i := 0; i < peers; i++ {
 		c.currConf = append(c.currConf, i)
 	}
+
+	// TODO uncomment this after testing
+	/* c.setActive()
+	if !c.active {
+		c.BecomeActive()
+	} */
 
 	go c.readUpdates()
 	go c.submitOps()

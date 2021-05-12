@@ -45,6 +45,31 @@ func (m *Mockraft) GetApplyCh() <-chan raft.ApplyMsg {
 	return m.applyCh
 }
 
+// Implemented as no-op as it shouldn't be called on mockraft
+func (m *Mockraft) GetProvisionalConfiguration() (bool, map[int]bool) {
+	return true, make(map[int]bool)
+}
+
+// Implemented as no-op as it shouldn't be called on mockraft
+func (m *Mockraft) GetCurrentConfiguration() (bool, map[int]bool) {
+	return true, make(map[int]bool)
+}
+
+// Implemented as no-op as it shouldn't be called on mockraft
+func (m *Mockraft) AddProvisional(peer int) (int, raft.AddProvisionalError) {
+	return 0, raft.AP_SUCCESS
+}
+
+// Implemented as no-op as it shouldn't be called on mockraft
+func (m *Mockraft) RemoveServer(peer int) (<-chan bool, raft.AddRemoveServerError) {
+	return nil, raft.AR_OK
+}
+
+// Implemented as no-op as it shouldn't be called on mockraft
+func (m *Mockraft) AddServer(peer int) (<-chan bool, raft.AddRemoveServerError) {
+	return nil, raft.AR_OK
+}
+
 func New(applyCh chan raft.ApplyMsg) *Mockraft {
 	return &Mockraft{applyCh: applyCh}
 }

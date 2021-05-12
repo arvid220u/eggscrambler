@@ -37,4 +37,18 @@ type Raft interface {
 	// believes it is the leader.
 	// Useful for testing.
 	GetState() (int, bool)
+
+	// Returns whether or not the server thinks it's the leader
+	// and a set of servers with provisional status
+	GetProvisionalConfiguration() (bool, map[int]bool)
+
+	// // Returns whether or not the server thinks it's the leader
+	// and a set of servers with voting status
+	GetCurrentConfiguration() (bool, map[int]bool)
+
+	AddProvisional(peer int) (int, raft.AddProvisionalError)
+
+	RemoveServer(peer int) (<-chan bool, raft.AddRemoveServerError)
+
+	AddServer(peer int) (<-chan bool, raft.AddRemoveServerError)
 }
