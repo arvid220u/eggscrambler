@@ -293,10 +293,10 @@ func (c *Client) readUpdates() {
 
 				//only join round if we're in the raft configuration and not actively trying to leave it
 				if c.active && !c.leaving {
+					go c.prepare(round, ri, me)
+				} else {
 					continue
 				}
-
-				go c.prepare(round, ri, me)
 			case SubmitPhase:
 				if !c.active || me == -1 {
 					// we don't have any business in this round

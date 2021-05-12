@@ -47,37 +47,6 @@ func (mg MessageGenerator) Message(round int) []byte {
 	return []byte(fmt.Sprintf("message in round %d from %s", round, mg.id))
 }
 
-/*func equalContentsBytes(b1 [][]byte, b2 [][]byte) bool {
-	var s1 []string
-	for _, b := range b1 {
-		s1 = append(s1, string(b))
-	}
-	var s2 []string
-	for _, b := range b2 {
-		s2 = append(s2, string(b))
-	}
-	return equalContents(s1, s2)
-}*/
-
-/*func equalContents(s1 []string, s2 []string) bool {
-	if len(s1) != len(s2) {
-		return false
-	}
-	s1c := make([]string, len(s1))
-	copy(s1c, s1)
-	s2c := make([]string, len(s2))
-	copy(s2c, s2)
-	sort.Strings(s1c)
-	sort.Strings(s2c)
-
-	for i, c1 := range s1c {
-		if c1 != s2c[i] {
-			return false
-		}
-	}
-	return true
-}*/
-
 func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	applyCh := make(chan raft.ApplyMsg)
 	rf := mockraft.New(applyCh)
