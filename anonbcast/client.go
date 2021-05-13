@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -19,9 +20,11 @@ func init() {
 	var b [8]byte
 	_, err := crand.Read(b[:])
 	if err != nil {
-		assertf(false, "cannot seed math/rand, err: %v", err)
+		assertf(false, "init package", "cannot seed math/rand, err: %v", err)
 	}
 	rand.Seed(int64(binary.LittleEndian.Uint64(b[:])))
+
+	log.SetFlags(log.Lmicroseconds)
 }
 
 // Client performs the anonymous broadcasting protocol, and exposes the bare minimum of
@@ -35,7 +38,7 @@ type Client struct {
 
 	// Id of the underlying state machine server.
 	// Used for the client to make configuration changes.
-	serverId int
+	serverId int // never modified concurrently, so don't need lock on mu
 
 	// dead indicates whether the client is alive. Set by Kill()
 	dead int32
@@ -102,9 +105,9 @@ func (c *Client) submitOp(op Op) error {
 func (c *Client) sendRoundResult(sm StateMachine, round int) {
 	ri, err := sm.GetRoundInfo(round - 1)
 	if err != nil {
-		assertf(false, "must be able to get previous round, error is %v", err)
+		c.assertf(false, "must be able to get previous round, error is %v", err)
 	}
-	assertf(ri.Phase == DonePhase || ri.Phase == FailedPhase, "must either fail or done")
+	c.assertf(ri.Phase == DonePhase || ri.Phase == FailedPhase, "must either fail or done")
 	var messages [][]byte
 	for _, m := range ri.Messages {
 		om := m
@@ -141,7 +144,7 @@ func (c *Client) submit(round int, ri *RoundInfo, me int, encryptKey PrivateKey)
 		msg := c.m.Message(round)
 		m, err := ri.Crypto.PrepareMsg(msg)
 		if err != nil {
-			c.logf("message size too long, using dummy message, %v", err)
+			c.logf(dInfo, "message size too long, using dummy message, %v", err)
 			m, err = ri.Crypto.PrepareMsg([]byte("dummy"))
 			c.assertf(err == nil, "dummy cannot be too long, err: %v", err)
 		}
@@ -268,7 +271,7 @@ func (c *Client) readUpdates() {
 
 		if updMsg.StateMachineValid {
 			sm := updMsg.StateMachine
-			c.logf("received state machine update! %+v", sm)
+			c.logf(dInfo, "received state machine update! %+v", sm)
 
 			go c.lastUpdate.set(sm, version)
 			version++
@@ -286,7 +289,7 @@ func (c *Client) readUpdates() {
 			case PreparePhase:
 				if round-1 > lastResChSend {
 					// send the result of the previous round!
-					assertf(lastResChSend == round-2, "required to be true because updates are in order")
+					c.assertf(lastResChSend == round-2, "required to be true because updates are in order")
 					go c.sendRoundResult(sm, round)
 					lastResChSend = round - 1
 				}
@@ -303,7 +306,7 @@ func (c *Client) readUpdates() {
 					continue
 				}
 				if round > lastKeyGen {
-					assertf(lastKeyGen == round-1, "required true because updates are in order")
+					c.assertf(lastKeyGen == round-1, "lastKeyGen (%d) != round (%d) - 1 which is bad", lastKeyGen, round)
 					// TODO: verify that ri.Crypto is a sane generator. We may have gotten it from a malicious user!!
 					// 	so verify that the prime is big enough
 					encryptKey = ri.Crypto.GenKey()
@@ -342,7 +345,7 @@ func (c *Client) readUpdates() {
 				go c.reveal(round, ri, me, revealKey.DeepCopy())
 			}
 		} else if updMsg.ConfigurationValid {
-			c.logf("Received configuration update: %v", updMsg.Configuration)
+			c.logf(dInfo, "Received configuration update: %v", updMsg.Configuration)
 			c.mu.Lock()
 			if _, ok := updMsg.Configuration[c.serverId]; ok {
 				// we're in the configuration
@@ -354,7 +357,7 @@ func (c *Client) readUpdates() {
 			}
 
 			c.currConf = mapToSlice(updMsg.Configuration)
-			assertf(len(c.currConf) > 0, "Expected configuration with at least 1 server, but none found: %v", updMsg.Configuration)
+			c.assertf(len(c.currConf) > 0, "Expected configuration with at least 1 server, but none found: %v", updMsg.Configuration)
 			c.lastKnownLeaderInd = 0 // reset this to avoid OOB errors
 			c.mu.Unlock()
 		}
@@ -397,23 +400,24 @@ func (c *Client) killed() bool {
 	return z == 1
 }
 
-func (c *Client) logf(format string, a ...interface{}) {
-	logHeader := fmt.Sprintf("[client %s] ", c.Id.String())
-	DPrintf(logHeader+format, a...)
+func (c *Client) logf(topic logTopic, format string, a ...interface{}) {
+	logf(topic, c.logHeader(), format, a...)
+}
+
+func (c *Client) logHeader() string {
+	return fmt.Sprintf("client %s (on server %d)", c.Id.String(), c.serverId)
 }
 
 func (c *Client) assertf(condition bool, format string, a ...interface{}) {
-	logHeader := fmt.Sprintf("[client %s] ", c.Id.String())
-	dump := ""
-	if IsDump() {
-		dump = "\n\n" + spew.Sdump(c)
-	}
-	assertf(condition, logHeader+format+dump, a...)
+	c.dump()
+	assertf(condition, c.logHeader(), format, a...)
 }
 func (c *Client) dump() {
 	if IsDebug() && IsDump() {
-		// ideally we would lock before we dump to avoid races, but we don't have a global lock so we can't :(
-		c.logf(spew.Sdump(c))
+		// this still has race conditions since we use atomic ints for killed
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.logf(dDump, spew.Sdump(c))
 	}
 }
 

@@ -11,16 +11,25 @@ import (
 const debugEnvKey = "DEBUG"
 const dumpEnvKey = "DUMP"
 
-func DPrintf(format string, a ...interface{}) {
-	log.SetFlags(log.Lmicroseconds)
+type logTopic string
+
+const (
+	dError   logTopic = "ERRO"
+	dWarning logTopic = "WARN"
+	dInfo    logTopic = "INFO"
+	dDump    logTopic = "DUMP"
+)
+
+func logf(topic logTopic, header string, format string, a ...interface{}) {
 	if IsDebug() {
-		log.Printf(format, a...)
+		log.Printf(string(topic)+" ["+header+"] "+format, a...)
 	}
 }
 
-func assertf(condition bool, format string, a ...interface{}) {
+func assertf(condition bool, header string, format string, a ...interface{}) {
 	if IsDebug() && !condition {
-		panic(fmt.Sprintf(format, a...))
+		logf(dError, header, format, a...)
+		panic("assertion error: " + fmt.Sprintf("(see above) "+format, a...))
 	}
 }
 

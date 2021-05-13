@@ -2,6 +2,7 @@ package anonbcast
 
 import (
 	"errors"
+	"github.com/davecgh/go-spew/spew"
 
 	"github.com/google/uuid"
 )
@@ -32,11 +33,27 @@ type StateMachine struct {
 	Rounds [NumRoundsPersisted]RoundInfo
 }
 
+func (sm *StateMachine) logHeader() string {
+	return "state machine" // it may make sense to reference the server, although state machines exist everywhere
+}
+func (sm *StateMachine) logf(topic logTopic, format string, a ...interface{}) {
+	logf(topic, sm.logHeader(), format, a...)
+}
+func (sm *StateMachine) assertf(condition bool, format string, a ...interface{}) {
+	sm.dump()
+	assertf(condition, sm.logHeader(), format, a...)
+}
+func (sm *StateMachine) dump() {
+	if IsDebug() && IsDump() {
+		sm.logf(dDump, spew.Sdump(sm))
+	}
+}
+
 func (sm *StateMachine) checkRep() {
 	if !IsDebug() {
 		return
 	}
-	assertf(sm.Round >= 0, "round must be non-negative")
+	sm.assertf(sm.Round >= 0, "round must be non-negative")
 	for i := 0; i < NumRoundsPersisted; i++ {
 		sm.Rounds[i].checkRep()
 	}
@@ -64,22 +81,38 @@ type RoundInfo struct {
 	RevealedKeys []PrivateKey
 }
 
+func (ri *RoundInfo) logHeader() string {
+	return "state machine" // it may make sense to reference the server, although state machines exist everywhere
+}
+func (ri *RoundInfo) logf(topic logTopic, format string, a ...interface{}) {
+	logf(topic, ri.logHeader(), format, a...)
+}
+func (ri *RoundInfo) assertf(condition bool, format string, a ...interface{}) {
+	ri.dump()
+	assertf(condition, ri.logHeader(), format, a...)
+}
+func (ri *RoundInfo) dump() {
+	if IsDebug() && IsDump() {
+		ri.logf(dDump, spew.Sdump(ri))
+	}
+}
+
 func (ri *RoundInfo) checkRep() {
 	if !IsDebug() {
 		return
 	}
-	assertf(len(ri.Participants) == len(ri.Messages), "must be equally many participants for each field!")
-	assertf(len(ri.Participants) == len(ri.Encrypted), "must be equally many participants for each field!")
-	assertf(len(ri.Participants) == len(ri.Scrambled), "must be equally many participants for each field!")
-	assertf(len(ri.Participants) == len(ri.Decrypted), "must be equally many participants for each field!")
-	assertf(len(ri.Participants) == len(ri.RevealedKeys), "must be equally many participants for each field!")
-	assertf(ri.Phase == "" || ri.Phase == PreparePhase || ri.Crypto != nil, "crypto must not be nil if left prepare phase")
-	assertf(ri.Phase != PreparePhase || ri.Crypto == nil, "crypto must be nil if not left prepare phase")
+	ri.assertf(len(ri.Participants) == len(ri.Messages), "must be equally many participants for each field!")
+	ri.assertf(len(ri.Participants) == len(ri.Encrypted), "must be equally many participants for each field!")
+	ri.assertf(len(ri.Participants) == len(ri.Scrambled), "must be equally many participants for each field!")
+	ri.assertf(len(ri.Participants) == len(ri.Decrypted), "must be equally many participants for each field!")
+	ri.assertf(len(ri.Participants) == len(ri.RevealedKeys), "must be equally many participants for each field!")
+	ri.assertf(ri.Phase == "" || ri.Phase == PreparePhase || ri.Crypto != nil, "crypto must not be nil if left prepare phase")
+	ri.assertf(ri.Phase != PreparePhase || ri.Crypto == nil, "crypto must be nil if not left prepare phase")
 
 	for i1, p1 := range ri.Participants {
 		for i2, p2 := range ri.Participants {
 			if p1 == p2 && i1 != i2 {
-				assertf(false, "all participants must be distinct!")
+				ri.assertf(false, "all participants must be distinct!")
 			}
 		}
 	}
@@ -91,9 +124,6 @@ func (ri *RoundInfo) checkRep() {
 func (sm *StateMachine) Apply(op Op) bool {
 	sm.checkRep()
 	defer sm.checkRep()
-	// TODO: tie this to the server's logger somehow?
-	DPrintf("applying operation %+v to the state machine", op)
-	defer DPrintf("state machine is now: %+v", sm)
 
 	if op.Round() != sm.Round {
 		return false
@@ -117,7 +147,7 @@ func (sm *StateMachine) Apply(op Op) bool {
 	case AbortOpType:
 		return sm.abort(op.(AbortOp))
 	default:
-		assertf(false, "this should never happen")
+		sm.assertf(false, "this should never happen")
 		return false
 	}
 }
@@ -169,7 +199,7 @@ func (sm *StateMachine) message(op MessageOp) bool {
 	}
 	p, err := ri.participantIndex(op.Id)
 	if err != nil {
-		DPrintf("WARNING: participant %v not found for message op, which should never happen with a legal client", op.Id)
+		sm.logf(dWarning, "participant %v not found for message op, which should never happen with a legal client", op.Id)
 		return false
 	}
 
@@ -202,7 +232,7 @@ func (sm *StateMachine) encrypted(op EncryptedOp) bool {
 	}
 	p, err := ri.participantIndex(op.Id)
 	if err != nil {
-		DPrintf("WARNING: participant %v not found for encrypted op, which should never happen with a legal client", op.Id)
+		sm.logf(dWarning, "participant %v not found for encrypted op, which should never happen with a legal client", op.Id)
 		return false
 	}
 
@@ -241,7 +271,7 @@ func (sm *StateMachine) scrambled(op ScrambledOp) bool {
 	}
 	p, err := ri.participantIndex(op.Id)
 	if err != nil {
-		DPrintf("WARNING: participant %v not found for scrambled op, which should never happen with a legal client", op.Id)
+		sm.logf(dWarning, "participant %v not found for scrambled op, which should never happen with a legal client", op.Id)
 		return false
 	}
 
@@ -280,7 +310,7 @@ func (sm *StateMachine) decrypted(op DecryptedOp) bool {
 	}
 	p, err := ri.participantIndex(op.Id)
 	if err != nil {
-		DPrintf("WARNING: participant %v not found for decrypted op, which should never happen with a legal client", op.Id)
+		sm.logf(dWarning, "participant %v not found for decrypted op, which should never happen with a legal client", op.Id)
 		return false
 	}
 
@@ -309,7 +339,7 @@ func (sm *StateMachine) reveal(op RevealOp) bool {
 	}
 	p, err := ri.participantIndex(op.Id)
 	if err != nil {
-		DPrintf("WARNING: participant %v not found for reveal op, which should never happen with a legal client", op.Id)
+		sm.logf(dWarning, "participant %v not found for reveal op, which should never happen with a legal client", op.Id)
 		return false
 	}
 
@@ -355,7 +385,7 @@ func (sm *StateMachine) GetRoundInfo(round int) (*RoundInfo, error) {
 
 func (sm *StateMachine) CurrentRoundInfo() *RoundInfo {
 	ri, err := sm.GetRoundInfo(sm.Round)
-	assertf(err == nil, "current round should always exist: %v", err)
+	sm.assertf(err == nil, "current round should always exist: %v", err)
 	return ri
 }
 
@@ -440,7 +470,7 @@ func NewStateMachine(snapshot []byte) StateMachine {
 }
 
 func (sm *StateMachine) initRound(round int) {
-	assertf(sm.Round == round, "can only init current round!")
+	sm.assertf(sm.Round == round, "can only init current round!")
 	sm.Rounds[round%NumRoundsPersisted] = RoundInfo{
 		Phase: PreparePhase,
 	}

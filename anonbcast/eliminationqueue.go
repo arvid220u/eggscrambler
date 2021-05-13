@@ -19,7 +19,7 @@ func (p *eliminationQueue) checkRep() {
 	if !IsDebug() {
 		return
 	}
-	assertf(len(p.ops) <= 1, "only one operation at a time possible")
+	assertf(len(p.ops) <= 1, "elimination queue", "only one operation at a time possible")
 }
 
 func newEliminationQueue() *eliminationQueue {
@@ -112,7 +112,7 @@ func opIndex(op Op) int {
 	case AbortOpType:
 		return 7
 	default:
-		assertf(false, "should never happen")
+		assertf(false, "elimination queue", "should never happen")
 		return -1
 	}
 }
@@ -175,6 +175,6 @@ func compare(a Op, b Op) opComparison {
 	}
 
 	// we should never get here...
-	assertf(false, "we should never get here")
+	assertf(false, "elimination queue", "we should never get here")
 	return opIncomparable
 }

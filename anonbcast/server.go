@@ -98,7 +98,7 @@ func (s *Server) IsLeader(args interface{}, reply *OpRpcReply) {
 func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.logf("SubmitOp called with args: %v", *args)
+	s.logf(dInfo, "SubmitOp called with args: %v", *args)
 
 	if s.sm.GuaranteedNoEffect(*args) {
 		// even if this server is not the leader, there is no need to retry
@@ -108,7 +108,7 @@ func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 
 	index, term, ok := s.rf.Start(*args)
 
-	s.logf("started consensus. index %d, term %d, ok %v", index, term, ok)
+	s.logf(dInfo, "started consensus. index %d, term %d, ok %v", index, term, ok)
 
 	if !ok {
 		reply.Err = ErrWrongLeader
@@ -133,14 +133,16 @@ func (s *Server) applier() {
 	for !s.killed() {
 		msg := <-s.applyCh
 
-		s.logf("received msg %v from raft!", msg)
+		s.logf(dInfo, "received msg %v from raft!", msg)
 
 		s.mu.Lock()
 
 		if msg.CommandValid {
 			op := msg.Command.(Op)
 
+			s.logf(dInfo, "applying operation %+v to the state machine", op)
 			updated := s.sm.Apply(op)
+			s.logf(dInfo, "state machine is now: %+v", s.sm)
 			if updated {
 				s.sendStateMachineUpdate()
 			}
@@ -182,24 +184,24 @@ func (s *Server) killed() bool {
 	return z == 1
 }
 
-func (s *Server) logf(format string, a ...interface{}) {
-	logHeader := fmt.Sprintf("[server %d] ", s.Me)
-	DPrintf(logHeader+format, a...)
+func (s *Server) logHeader() string {
+	return fmt.Sprintf("server %d", s.Me)
+}
+
+func (s *Server) logf(topic logTopic, format string, a ...interface{}) {
+	logf(topic, s.logHeader(), format, a...)
 }
 
 func (s *Server) assertf(condition bool, format string, a ...interface{}) {
-	logHeader := fmt.Sprintf("[server %d] ", s.Me)
-	dump := ""
-	if IsDump() {
-		dump = "\n\n" + spew.Sdump(s)
-	}
-	assertf(condition, logHeader+format+dump, a...)
+	s.dump()
+	assertf(condition, s.logHeader(), format, a...)
 }
 func (s *Server) dump() {
 	if IsDebug() && IsDump() {
+		// this still has race conditions because we use atomic int for killed
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		s.logf(spew.Sdump(s))
+		s.logf(dDump, spew.Sdump(s))
 	}
 }
 

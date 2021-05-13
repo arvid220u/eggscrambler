@@ -18,7 +18,7 @@ func NewRespChannels() RespChannels {
 }
 
 func (r *respChannelsImpl) Create(i int, j int) chan bool {
-	assertf(r.Get(i, j) == nil, "cannot create existing channel!")
+	assertf(r.Get(i, j) == nil, "resp channels", "cannot create existing channel!")
 	ch := make(chan bool)
 	if r.m[i] == nil {
 		r.m[i] = make(map[int]chan bool)
@@ -36,7 +36,7 @@ func (r *respChannelsImpl) Get(i int, j int) chan bool {
 }
 
 func (r *respChannelsImpl) Close(i int, j int) {
-	assertf(r.Get(i, j) != nil, "cannot close nonexisting channel!")
+	assertf(r.Get(i, j) != nil, "resp channels", "cannot close nonexisting channel!")
 	close(r.Get(i, j))
 	delete(r.m[i], j)
 	if len(r.m[i]) == 0 {
