@@ -80,22 +80,19 @@ func (ro *resultOrderer) killed() bool {
 	return z == 1
 }
 
-func (ro *resultOrderer) order(unorderedResults <-chan RoundResult, orderedResults chan<- RoundResult) {
+func (ro *resultOrderer) order(unorderedResults <-chan RoundResult, orderedResults chan<- RoundResult, startingApplyIndex int) {
 	var results []RoundResult
-	applyIndex := 0
+	applyIndex := startingApplyIndex
 	for !ro.killed() {
-		select {
-		case r := <-unorderedResults:
-			for len(results) <= r.Round {
-				results = append(results, RoundResult{Round: -1})
-			}
-			results[r.Round] = r
+		r := <-unorderedResults
+		for len(results) <= r.Round {
+			results = append(results, RoundResult{Round: -1})
+		}
+		results[r.Round] = r
 
-			for applyIndex < len(results) && results[applyIndex].Round != -1 {
-				orderedResults <- results[applyIndex]
-				applyIndex++
-			}
-		case <-time.After(5 * time.Millisecond):
+		for applyIndex < len(results) && results[applyIndex].Round != -1 {
+			orderedResults <- results[applyIndex]
+			applyIndex++
 		}
 
 	}
@@ -518,7 +515,7 @@ func (cfg *config) oneRound(round int) int {
 	orderedResults := make(chan RoundResult)
 	ro := &resultOrderer{}
 	defer ro.kill()
-	go ro.order(results, orderedResults)
+	go ro.order(results, orderedResults, round)
 	for i := 0; i < 2; i++ {
 		actualRound := round + i
 		fmt.Printf("XXX Starting round %d\n", actualRound) // TODO remove

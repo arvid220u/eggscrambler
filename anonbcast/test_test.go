@@ -90,7 +90,7 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	results := c1.GetResCh()
 	orderedResults := make(chan RoundResult)
 	ro := &resultOrderer{}
-	go ro.order(results, orderedResults)
+	go ro.order(results, orderedResults, 0)
 	c2 := NewClient(s, mg2, cp2)
 	c3 := NewClient(s, mg3, cp3)
 
