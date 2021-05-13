@@ -306,7 +306,8 @@ func (c *Client) readUpdates() {
 					continue
 				}
 				if round > lastKeyGen {
-					c.assertf(lastKeyGen == round-1, "lastKeyGen (%d) != round (%d) - 1 which is bad", lastKeyGen, round)
+					// we don't necessarily know that lastKeyGen = round-1 here, because this client
+					// may not have participated in the last round. that is okay, though.
 					// TODO: verify that ri.Crypto is a sane generator. We may have gotten it from a malicious user!!
 					// 	so verify that the prime is big enough
 					encryptKey = ri.Crypto.GenKey()
