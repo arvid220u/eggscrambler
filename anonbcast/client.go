@@ -481,7 +481,7 @@ func (c *Client) aborter() {
 			c.assertf(false, "in phase %v which should never happen", lastUpdate.sm.CurrentRoundInfo().Phase)
 		}
 
-		c.assertf(sleepAmount < 0, "sleep amount should never be < 0, but it is %d", sleepAmount)
+		c.assertf(sleepAmount >= 0, "sleep amount should never be < 0, but it is %d", sleepAmount)
 
 		time.Sleep(sleepAmount)
 	}
