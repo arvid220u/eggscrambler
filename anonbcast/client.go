@@ -5,14 +5,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/arvid220u/6.824-project/network"
-	"github.com/davecgh/go-spew/spew"
-	"github.com/google/uuid"
 	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/arvid220u/6.824-project/network"
+	"github.com/davecgh/go-spew/spew"
+	"github.com/google/uuid"
 )
 
 // inspiration: https://stackoverflow.com/a/54491783
@@ -358,6 +359,11 @@ func (c *Client) reveal(round int, ri *RoundInfo, me int, revealKey PrivateKey) 
 // readUpdates is a long-running goroutine that reads from the updCh and takes
 // action to follow the protocol.
 func (c *Client) readUpdates() {
+	c.setActive()
+	if !c.getActiveUnlocked() {
+		go c.BecomeActive()
+	}
+
 	lastResChSend := -1
 	lastMessageRound := -1
 	version := 0
@@ -397,13 +403,14 @@ func (c *Client) readUpdates() {
 				}
 
 				//only join round if we're in the raft configuration and not actively trying to leave it
-				if c.active && !c.leaving {
+				if c.getActiveUnlocked() && !c.getLeavingUnlocked() {
 					go c.prepare(round, ri, me)
 				} else {
 					continue
 				}
 			case SubmitPhase:
-				if !c.active || me == -1 {
+				c.logf(dInfo, "Active: %v, Me: %d", c.getActiveUnlocked(), me)
+				if !c.getActiveUnlocked() || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
@@ -423,29 +430,32 @@ func (c *Client) readUpdates() {
 				}
 				// we want to make sure that we only ask the user for a message once per round
 				if round > lastMessageRound {
+					c.logf(dInfo, "Going to call submit for round %d", round)
 					go c.submit(round, ri, me, encryptKey.DeepCopy())
 					lastMessageRound = round
+				} else {
+					c.logf(dInfo, "Already submitted message for round %d. Waiting", round)
 				}
 			case EncryptPhase:
-				if !c.active || me == -1 {
+				if !c.getActiveUnlocked() || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
 				go c.encrypt(round, ri, me, encryptKey.DeepCopy())
 			case ScramblePhase:
-				if !c.active || me == -1 {
+				if !c.getActiveUnlocked() || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
 				go c.scramble(round, ri, me, scrambleKey.DeepCopy(), revealKey.DeepCopy())
 			case DecryptPhase:
-				if !c.active || me == -1 {
+				if !c.getActiveUnlocked() || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
 				go c.decrypt(round, ri, me, scrambleKey.DeepCopy(), encryptKey.DeepCopy())
 			case RevealPhase:
-				if !c.active || me == -1 {
+				if !c.getActiveUnlocked() || me == -1 {
 					// we don't have any business in this round
 					continue
 				}
@@ -556,8 +566,8 @@ func (c *Client) aborter() {
 // Cycles through the servers in the known configuration
 func (c *Client) updateLeader() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.lastKnownLeaderInd = (c.lastKnownLeaderInd + 1) % len(c.currConf)
+	c.mu.Unlock()
 }
 
 // Kill kills all long-running goroutines and releases any memory
@@ -621,6 +631,20 @@ func mapToSlice(mp map[int]bool) []int {
 	return sl
 }
 
+func (c *Client) getActiveUnlocked() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	tempActive := c.active
+	return tempActive
+}
+
+func (c *Client) getLeavingUnlocked() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	tempLeaving := c.leaving
+	return tempLeaving
+}
+
 // GetResCh returns a channel on which the results of rounds are sent.
 // sent. Each round result will be sent exactly once, but it is not
 // guaranteed that the results will be sent in order, if, for example,
@@ -675,7 +699,7 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf Client
 		s.CloseUpdCh(i)
 	}
 	c.serverId = s.Me
-	c.active = true // TODO set this to false on init after testing.
+	c.active = false
 	c.leaving = false
 	c.Config = conf
 
@@ -684,12 +708,6 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf Client
 	for i := 0; i < peers; i++ {
 		c.currConf = append(c.currConf, i)
 	}
-
-	// TODO uncomment this after testing
-	/* c.setActive()
-	if !c.active {
-		c.BecomeActive()
-	} */
 
 	go c.readUpdates()
 	go c.submitOps()

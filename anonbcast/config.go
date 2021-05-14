@@ -510,21 +510,9 @@ func (cfg *config) end() {
 	}
 }
 
-// Assuming at least 1 client has been created using the default generator,
-// completes one broadcast round
-// Returns the current round at the end of the process.
-// Only use this in a configuration with automatic, deterministic Messagers
-func (cfg *config) oneRound(round int) int {
-	c1Id := cfg.orderedClientIds[0]
-	mg1 := cfg.orderedMessagers[0]
-
-	var c1 *Client
-	for cl := range cfg.clients {
-		if cl.Id == c1Id {
-			c1 = cl
-			break
-		}
-	}
+func (cfg *config) oneRoundWithExpectedConfiguration(round int, expectedConfiguration map[int]bool) int {
+	fmt.Printf("Starting round %d\n", round)
+	c1Id, c1, mg1 := cfg.getActiveClient(expectedConfiguration)
 
 	results := c1.GetResCh()
 	orderedResults := make(chan RoundResult)
@@ -545,7 +533,7 @@ func (cfg *config) oneRound(round int) int {
 		} else {
 			// wait for everyone to submit :)
 			sm1 := c1.GetLastStateMachine()
-			for sm1.Round != actualRound || len(sm1.CurrentRoundInfo().Participants) < cfg.n {
+			for sm1.Round != actualRound || len(sm1.CurrentRoundInfo().Participants) < len(expectedConfiguration) {
 				time.Sleep(time.Millisecond * 5)
 				sm1 = c1.GetLastStateMachine()
 			}
@@ -595,6 +583,20 @@ func (cfg *config) oneRound(round int) int {
 	return round + 1
 }
 
+// Assuming at least 1 client has been created using the default generator,
+// completes one broadcast round
+// Returns the current round at the end of the process.
+// Only use this in a configuration with automatic, deterministic Messagers
+// Assumes all servers are in configuration
+func (cfg *config) oneRound(round int) int {
+	expectedConfiguration := make(map[int]bool)
+	for i := 0; i < cfg.n; i++ {
+		expectedConfiguration[i] = true
+	}
+
+	return cfg.oneRoundWithExpectedConfiguration(round, expectedConfiguration)
+}
+
 func equalContentsBytes(b1 [][]byte, b2 [][]byte) bool {
 	var s1 []string
 	for _, b := range b1 {
@@ -631,7 +633,7 @@ func equalContents(s1 []string, s2 []string) bool {
 // Or soon after a client attempted to add/remove itself from the configuration
 func (cfg *config) checkConfigurationMatchesParticipants(expectedConfiguration map[int]bool) {
 	activeClientIds := cfg.getActiveClientIds(expectedConfiguration)
-	activeClient := cfg.getActiveClient(expectedConfiguration)
+	_, activeClient, _ := cfg.getActiveClient(expectedConfiguration)
 	sm := activeClient.GetLastStateMachine() // XXX I don't think I should DeepCopy here but maybe I should?
 	participants := sm.CurrentRoundInfo().Participants
 	if len(participants) != len(activeClientIds) {
@@ -654,20 +656,22 @@ func (cfg *config) getActiveClientIds(expectedConfiguration map[int]bool) map[uu
 	return activeClientIds
 }
 
-func (cfg *config) getActiveClient(expectedConfiguration map[int]bool) *Client {
+func (cfg *config) getActiveClient(expectedConfiguration map[int]bool) (uuid.UUID, *Client, Messager) {
 	var cId uuid.UUID
+	var mg Messager
 	for s := range expectedConfiguration {
 		cId = cfg.orderedClientIds[s]
+		mg = cfg.orderedMessagers[s]
 		break
 	}
 
 	for cl := range cfg.clients {
 		if cId == cl.Id {
-			return cl
+			return cId, cl, mg
 		}
 	}
 
 	cfg.t.Fatalf("Couldn't find active client given server configuration %v", expectedConfiguration)
 	// Should be unreachable, idk what the right way to do this is
-	return nil
+	return uuid.UUID{}, nil, nil
 }

@@ -168,14 +168,14 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 }
 
 func TestReliableNetBasic(t *testing.T) {
-	cfg := make_config(t, 3, false, -1)
+	servers := 3
+	cfg := make_config(t, servers, false, -1)
 	defer cfg.cleanup()
 	cfg.begin("Basic broadcast over reliable network")
 	time.Sleep(3 * time.Second) // generous amount of time for leader election
 
 	round := 0
 	for i := 0; i < 10; i++ {
-		fmt.Printf("Attempting broadcast round %d\n", i)
 		round = cfg.oneRound(round) + 1
 		time.Sleep(1 * time.Second) // probably could be much shorter
 	}
@@ -184,14 +184,14 @@ func TestReliableNetBasic(t *testing.T) {
 }
 
 func TestUnreliableNetBasic(t *testing.T) {
-	cfg := make_config(t, 3, true, -1)
+	servers := 3
+	cfg := make_config(t, servers, true, -1)
 	defer cfg.cleanup()
 	cfg.begin("Basic broadcast over unreliable network")
 	time.Sleep(3 * time.Second) // generous amount of time for leader election
 
 	round := 0
 	for i := 0; i < 10; i++ {
-		fmt.Printf("Attempting broadcast round %d\n", i)
 		round = cfg.oneRound(round) + 1
 		time.Sleep(1 * time.Second) // probably could be much shorter
 	}
@@ -206,10 +206,35 @@ func TestParticipantsAllInInitialConfiguration(t *testing.T) {
 		expectedConfiguration[i] = true
 	}
 
-	cfg := make_config(t, 3, false, -1)
+	cfg := make_config(t, servers, false, -1)
 	defer cfg.cleanup()
 	cfg.begin("Checking all participants present when all servers in configuration")
 	time.Sleep(3 * time.Second)
 
 	cfg.checkConfigurationMatchesParticipants(expectedConfiguration)
+}
+
+func TestParticipantsOneNotInInitialConfiguration(t *testing.T) {
+	servers := 4
+	serversInitiallyInConfiguration := servers - 1
+	expectedConfiguration := make(map[int]bool)
+	initialConfiguration := make(map[int]bool)
+	for i := 0; i < servers; i++ {
+		if i < serversInitiallyInConfiguration {
+			initialConfiguration[i] = true
+		}
+		expectedConfiguration[i] = true
+	}
+
+	cfg := make_config_with_initial_config(t, servers, false, -1, initialConfiguration)
+	defer cfg.cleanup()
+	cfg.begin("Check that client not in configuration adds self to configuration")
+	time.Sleep(5 * time.Second) // generous amount of time for election and configuration change
+
+	// The client out of configuration will miss the first round
+	cfg.checkConfigurationMatchesParticipants(initialConfiguration)
+
+	next := cfg.oneRoundWithExpectedConfiguration(0, initialConfiguration) + 1
+	time.Sleep(1 * time.Second)
+	cfg.oneRoundWithExpectedConfiguration(next, expectedConfiguration)
 }

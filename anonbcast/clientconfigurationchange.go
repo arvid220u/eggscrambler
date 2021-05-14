@@ -19,6 +19,7 @@ func (c *Client) getMembership(isProvisionalReq bool) bool {
 		c.mu.Unlock()
 		if !ok || !reply.IsLeader {
 			c.updateLeader()
+			time.Sleep(5 * time.Millisecond)
 			continue
 		}
 
@@ -33,8 +34,8 @@ func (c *Client) getMembership(isProvisionalReq bool) bool {
 func (c *Client) setActive() {
 	member := c.getMembership(false)
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.active = member
+	c.mu.Unlock()
 }
 
 // AttemptProvisional makes RPC requests until it gets a successful response.
