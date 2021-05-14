@@ -260,7 +260,12 @@ func (cfg *config) makeClient(m Messager, localSrv int, to []int) *Client {
 	}
 
 	cp := network.New(random_handles(ends))
-	cl := NewClient(cfg.servers[localSrv], m, cp)
+	clcf := ClientConfig{ // TODO: tune these parameters? should they be passed into makeClient
+		MessageTimeout:  time.Second * 30,
+		ProtocolTimeout: time.Second * 10,
+		MessageSize:     100,
+	}
+	cl := NewClient(cfg.servers[localSrv], m, cp, clcf)
 	cfg.clients[cl] = endnames
 	cfg.ConnectClientUnlocked(cl, to)
 	return cl

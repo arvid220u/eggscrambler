@@ -85,11 +85,16 @@ func main() {
 		mu: &mu,
 	}
 
-	c1 := anonbcast.NewClient(s, cg1, cp1)
+	clcf := anonbcast.ClientConfig{
+		MessageTimeout:  time.Second * 30,
+		ProtocolTimeout: time.Second * 10,
+		MessageSize:     100,
+	}
+	c1 := anonbcast.NewClient(s, cg1, cp1, clcf)
 	results := c1.GetResCh()
 	orderedResults := make(chan anonbcast.RoundResult)
 	go resultOrderer(results, orderedResults)
-	c2 := anonbcast.NewClient(s, cg2, cp2)
+	c2 := anonbcast.NewClient(s, cg2, cp2, clcf)
 
 	log.Printf("server: %+v, client 1: %+v, client 2: %+v\n", s, c1, c2)
 

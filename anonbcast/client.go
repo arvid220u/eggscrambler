@@ -5,14 +5,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/arvid220u/6.824-project/network"
+	"github.com/davecgh/go-spew/spew"
+	"github.com/google/uuid"
 	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
-
-	"github.com/arvid220u/6.824-project/network"
-	"github.com/davecgh/go-spew/spew"
-	"github.com/google/uuid"
+	"time"
 )
 
 // inspiration: https://stackoverflow.com/a/54491783
@@ -35,6 +35,9 @@ type Client struct {
 	// Id is the id of this client. Each client has its own unique id.
 	// Immutable.
 	Id uuid.UUID
+
+	// Config contains an immutable store of the configuration parameters for this particular instance
+	Config ClientConfig
 
 	// Id of the underlying state machine server.
 	// Used for the client to make configuration changes.
@@ -65,6 +68,27 @@ type Client struct {
 
 	// pending stores the operations that are pending submission to the leader
 	pending *eliminationQueue
+}
+
+type ClientConfig struct {
+	// MessageTimeout is the amount of time that the user has to return from when
+	// the client calls the user's Message method. The client will abort the submit
+	// phase if more than MessageTimeout + ProtocolTimeout seconds have passed.
+	// A reasonable value is 30 seconds, allowing the user to come up with a message and send it.
+	MessageTimeout time.Duration
+
+	// ProtocolTimeout is the amount of time that the client will wait for another
+	// client j to complete its task. Specifically, if this client has not heard of
+	// an update from client j in the last ProtocolTimeout time, and client j should
+	// have sent an update at the start of that interval, then this client will abort the round.
+	// A reasonable value is 10 seconds, which may allow clients to crash and restart.
+	ProtocolTimeout time.Duration
+
+	// MessageSize is the maximum size, in bytes, of the message that the user can send in a round.
+	// Note that to make sure that each message has indistinguishable length, each message will
+	// need to be padded to this length, so in terms of cost analysis the messages will always have
+	// the maximum length.
+	MessageSize int
 }
 
 // RoundResult represents the final outcome of a round.
@@ -137,17 +161,33 @@ func (c *Client) prepare(round int, ri *RoundInfo, me int) {
 	}
 }
 
+// abort aborts the given round!
+func (c *Client) abort(round int) {
+	op := AbortOp{R: round}
+	c.pending.add(op)
+}
+
 // submit is a helper method to readUpdates
 func (c *Client) submit(round int, ri *RoundInfo, me int, encryptKey PrivateKey) {
 	if ri.Messages[me].Nil() {
-		// TODO: time out here! if Message does not return within X seconds, then use a dummy message
-		msg := c.m.Message(round)
+		msgChan := make(chan []byte)
+		go func(msgChan chan []byte, round int) {
+			msgChan <- c.m.Message(round)
+		}(msgChan, round)
+		msg := []byte("dummy")
+		select {
+		case msg = <-msgChan:
+		case <-time.NewTimer(c.Config.MessageTimeout).C:
+			c.logf(dWarning, "message function timed out, using dummy message")
+		}
 		m, err := ri.Crypto.PrepareMsg(msg)
 		if err != nil {
-			c.logf(dInfo, "message size too long, using dummy message, %v", err)
+			c.assertf(len(msg) > c.Config.MessageSize, "prepare message threw but message is within bounds, %v", err)
+			c.logf(dWarning, "message size too long, using dummy message, %v", err)
 			m, err = ri.Crypto.PrepareMsg([]byte("dummy"))
 			c.assertf(err == nil, "dummy cannot be too long, err: %v", err)
 		}
+		c.assertf(len(msg) <= c.Config.MessageSize, "prepare message didn't throw but message is too big,len(msg)=%d, MessageSize=%d", len(msg), c.Config.MessageSize)
 		encryptedM := ri.Crypto.Encrypt(encryptKey, m)
 		op := MessageOp{
 			Id:      c.Id,
@@ -344,6 +384,8 @@ func (c *Client) readUpdates() {
 					continue
 				}
 				go c.reveal(round, ri, me, revealKey.DeepCopy())
+			default:
+				c.assertf(false, "in phase %v which should never happen", ri.Phase)
 			}
 		} else if updMsg.ConfigurationValid {
 			c.logf(dInfo, "Received configuration update: %v", updMsg.Configuration)
@@ -378,6 +420,70 @@ func (c *Client) submitOps() {
 			// op is now done, so remove it from the pending ops if it is there
 			c.pending.finish(op)
 		}
+	}
+}
+
+func min(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
+}
+
+// aborter checks the timestamp of the latest update that was received, and times out
+// if it is longer than the allowed timeout value.
+func (c *Client) aborter() {
+	for !c.killed() {
+		// make a copy of the last update because we want to read the time and state atomically
+		lastUpdate := c.lastUpdate.deepCopy()
+
+		// sleepAmount should be the maximum amount of time in the future during which
+		// we can GUARANTEE that there should be no timeout abort
+		var sleepAmount time.Duration = -1
+
+		switch lastUpdate.sm.CurrentRoundInfo().Phase {
+		case PreparePhase:
+			// no timeout in the prepare phase; the user could simply call start()
+			// so just wait protocol timeout amount of time
+			sleepAmount = c.Config.ProtocolTimeout
+		case SubmitPhase:
+			// we use message + protocol timeout so that each user has time to submit a message, and the
+			// protocol has time to propagate it
+			submitTimeout := c.Config.MessageTimeout + c.Config.ProtocolTimeout
+			timeSince := time.Since(lastUpdate.phaseTimestamp)
+			if timeSince > submitTimeout {
+				c.abort(lastUpdate.sm.Round)
+				sleepAmount = c.Config.ProtocolTimeout
+			} else {
+				sleepAmount = min(c.Config.ProtocolTimeout, submitTimeout-timeSince)
+			}
+		case EncryptPhase, ScramblePhase, DecryptPhase:
+			// we use the time since the last update, since the test-and-set means a client needs to recompute
+			// after a new update
+			timeSince := time.Since(lastUpdate.timestamp)
+			if timeSince > c.Config.ProtocolTimeout {
+				c.abort(lastUpdate.sm.Round)
+				sleepAmount = c.Config.ProtocolTimeout
+			} else {
+				sleepAmount = c.Config.ProtocolTimeout - timeSince
+			}
+		case RevealPhase:
+			// this is like the submit phase
+			timeSince := time.Since(lastUpdate.phaseTimestamp)
+			if timeSince > c.Config.ProtocolTimeout {
+				c.abort(lastUpdate.sm.Round)
+				sleepAmount = c.Config.ProtocolTimeout
+			} else {
+				sleepAmount = c.Config.ProtocolTimeout - timeSince
+			}
+		default:
+			c.assertf(false, "in phase %v which should never happen", lastUpdate.sm.CurrentRoundInfo().Phase)
+		}
+
+		c.assertf(sleepAmount < 0, "sleep amount should never be < 0, but it is %d", sleepAmount)
+
+		time.Sleep(sleepAmount)
 	}
 }
 
@@ -471,7 +577,7 @@ func (c *Client) Start(round int) error {
 	return nil
 }
 
-func NewClient(s *Server, m Messager, cp network.ConnectionProvider) *Client {
+func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf ClientConfig) *Client {
 	c := new(Client)
 	c.Id = uuid.New()
 	c.m = m
@@ -483,6 +589,7 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider) *Client {
 	c.serverId = s.Me
 	c.active = true // TODO set this to false on init after testing.
 	c.leaving = false
+	c.Config = conf
 
 	// Assume the configuration has all possible servers, until we get notified otherwise
 	peers := cp.NumPeers()
@@ -498,6 +605,7 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider) *Client {
 
 	go c.readUpdates()
 	go c.submitOps()
+	go c.aborter()
 
 	return c
 }
