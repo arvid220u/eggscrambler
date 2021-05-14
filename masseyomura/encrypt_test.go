@@ -3,6 +3,7 @@ package masseyomura
 import (
 	"crypto/rand"
 	"fmt"
+	"math/big"
 	"testing"
 )
 
@@ -16,6 +17,55 @@ func TestMasseyOmuraCommute(t *testing.T) {
 
 func TestMasseyOmuraCommuteMany(t *testing.T) {
 	MOTest(t, 1027, "hello", []int{0, 1, 2, 3, 4, 5})
+}
+
+func TestMasseyOmuraVerify(t *testing.T) {
+	byteLen := 200
+	syskey, err := GenSysKey(rand.Reader, BitsMaxSize(byteLen))
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	err = VerifySysKey(syskey, BitsMaxSize(byteLen))
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	err = VerifySysKey(syskey, BitsMaxSize(byteLen+1))
+	if err == nil {
+		t.Fatalf("expected verify to fail")
+	}
+	newsyskey := SystemKey{}
+	newsyskey.P = new(big.Int)
+	newsyskey.P.Add(syskey.P, big.NewInt(1))
+	err = VerifySysKey(&newsyskey, BitsMaxSize(byteLen))
+	if err == nil {
+		t.Fatalf("expected to fail because not a prime")
+	}
+}
+
+func TestMasseyOmuraLengths(t *testing.T) {
+	lengths := []struct{ keyBits, msgBytes int }{
+		{BitsMaxSize(100), 100},
+		{BitsMaxSize(10), 10},
+	}
+	for _, l := range lengths {
+		syskey, err := GenSysKey(rand.Reader, l.keyBits)
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		var b []byte
+		for i := 0; i < l.msgBytes; i++ {
+			b = append(b, 13)
+		}
+		_, err = PrepareMsg(b, syskey.P.BitLen())
+		if err != nil {
+			t.Fatalf("%+v: %v", l, err)
+		}
+		b = append(b, 13)
+		_, err = PrepareMsg(b, syskey.P.BitLen())
+		if err == nil {
+			t.Fatalf("%+v: error is nil but expected message too big", l)
+		}
+	}
 }
 
 // decrypt order is a permutation of {0, ..., n-1} for a system of n users.

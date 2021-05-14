@@ -3,6 +3,7 @@ package masseyomura
 import (
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 )
@@ -22,6 +23,18 @@ func GenSysKey(random io.Reader, bitsp int) (syskey *SystemKey, err error) {
 	}
 	syskey = &SystemKey{P: p}
 	return
+}
+
+// VerifySysKey returns nil error if and only if the provided syskey is safe for the bitsp length
+func VerifySysKey(syskey *SystemKey, bitsp int) error {
+	if syskey.P.BitLen() != bitsp {
+		return fmt.Errorf("syskey has bitlen %d != expected bitsp %d", syskey.P.BitLen(), bitsp)
+	}
+	// verify that it is prime
+	if !syskey.P.ProbablyPrime(40) {
+		return errors.New("given syskey is not probably prime!")
+	}
+	return nil
 }
 
 // given system p generate a user's public/private keypair

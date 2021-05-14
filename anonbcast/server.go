@@ -43,7 +43,7 @@ type Server struct {
 }
 
 func NewServer(me int, rf Raft) *Server {
-	labgob.Register(fakeCommutativeCrypto{}) // TODO: remove the fake crypto
+	labgob.Register(masseyOmuraCrypto{})
 	labgob.Register(JoinOp{})
 	labgob.Register(StartOp{})
 	labgob.Register(MessageOp{})

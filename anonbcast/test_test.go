@@ -99,7 +99,7 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	c2 := NewClient(s, mg2, cp2, clcf)
 	c3 := NewClient(s, mg3, cp3, clcf)
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		if i%2 == 0 {
 			// race to the start
 			err := c1.Start(i)

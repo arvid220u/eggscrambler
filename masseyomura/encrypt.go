@@ -5,14 +5,25 @@ import (
 	"math/big"
 )
 
+func bytesMaxSize(bits int) int {
+	// TODO: is this actually correct?
+	maxsize := (bits-1)/8 - 1 // message has strictly fewer bits than p
+	return maxsize
+}
+
+// BitsMaxSize reverse bytesMaxSize
+func BitsMaxSize(bytes int) int {
+	return 8*(bytes+1) + 1
+}
+
 // PrepareMsg prepares a []byte message for encryption
 // plen = PublicKey.P.BitLen()
 func PrepareMsg(msg []byte, plen int) (*big.Int, error) {
-	maxsize := (plen-1)/8 - 1 // message has strictly fewer bits than p
+	maxsize := bytesMaxSize(plen)
 	if len(msg) > maxsize {
 		return nil, fmt.Errorf("message size %d too long for %d bit key", len(msg), plen)
 	}
-	return new(big.Int).SetBytes(pad(msg, maxsize)), nil
+	return new(big.Int).SetBytes(pad(msg, maxsize+1)), nil // TODO: is maxsize+1 allowed here?
 }
 
 // Encrypt encrypts using privkey.E: result = message ^ privkey.E (mod p)
@@ -39,12 +50,12 @@ func pad(msg []byte, targetlen int) []byte {
 	if len(msg) == targetlen {
 		panic("message too long to encrypt")
 	}
-	padded := make([]byte, targetlen-1)
-	for i := 0; i < targetlen-2-len(msg); i++ {
+	padded := make([]byte, targetlen)
+	for i := 0; i < targetlen-1-len(msg); i++ {
 		padded[i] = 1
 	}
-	padded[targetlen-2-len(msg)] = 0
-	copy(padded[targetlen-len(msg)-1:], msg)
+	padded[targetlen-1-len(msg)] = 0
+	copy(padded[targetlen-len(msg):], msg)
 	return padded
 }
 
