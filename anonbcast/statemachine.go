@@ -79,6 +79,9 @@ type RoundInfo struct {
 	// RevealedKeys[i] is the public/private reveal keypair of participant Participants[i],
 	// or the nil value of the type if the participant has yet to submit it
 	RevealedKeys []PrivateKey
+	// RevealKeyHashes[i] is a SHA256 hash of the reveal key of participant Participants[i],
+	// or a length 0 or nil slice if the participant has yet to submit it
+	RevealKeyHashes [][]byte
 }
 
 func (ri *RoundInfo) logHeader() string {
@@ -106,14 +109,29 @@ func (ri *RoundInfo) checkRep() {
 	ri.assertf(len(ri.Participants) == len(ri.Scrambled), "must be equally many participants for each field!")
 	ri.assertf(len(ri.Participants) == len(ri.Decrypted), "must be equally many participants for each field!")
 	ri.assertf(len(ri.Participants) == len(ri.RevealedKeys), "must be equally many participants for each field!")
+	ri.assertf(len(ri.Participants) == len(ri.RevealKeyHashes), "must be equally many participants for each field!")
 	ri.assertf(ri.Phase == "" || ri.Phase == PreparePhase || ri.Phase == FailedPhase || ri.Crypto != nil, "crypto must not be nil if left prepare phase")
 	ri.assertf(ri.Phase != PreparePhase || ri.Crypto == nil, "crypto must be nil if not left prepare phase")
+
+	// scrambled must grow from left to right
+	for i, s := range ri.Scrambled {
+		if i > 0 && s {
+			ri.assertf(ri.Scrambled[i-1], "if i is scrambled, so must i-1 be")
+		}
+	}
 
 	for i1, p1 := range ri.Participants {
 		for i2, p2 := range ri.Participants {
 			if p1 == p2 && i1 != i2 {
 				ri.assertf(false, "all participants must be distinct!")
 			}
+		}
+	}
+	for i, m := range ri.Messages {
+		if !m.Nil() {
+			ri.assertf(ri.RevealKeyHashes[i] != nil && len(ri.RevealKeyHashes[i]) > 0, "reveal key hash must be submitted iff message is submitted")
+		} else {
+			ri.assertf(ri.RevealKeyHashes[i] == nil || len(ri.RevealKeyHashes[i]) == 0, "reveal key hash must be submitted iff message is submitted")
 		}
 	}
 }
@@ -166,6 +184,7 @@ func (sm *StateMachine) join(op JoinOp) bool {
 		ri.Scrambled = append(ri.Scrambled, false)
 		ri.Decrypted = append(ri.Decrypted, false)
 		ri.RevealedKeys = append(ri.RevealedKeys, NilPrivateKey())
+		ri.RevealKeyHashes = append(ri.RevealKeyHashes, nil)
 		return true
 	} else {
 		return false
@@ -204,6 +223,8 @@ func (sm *StateMachine) message(op MessageOp) bool {
 	}
 
 	ri.Messages[p] = op.Message
+	ri.RevealKeyHashes[p] = make([]byte, len(op.RevealKeyHash))
+	copy(ri.RevealKeyHashes[p], op.RevealKeyHash)
 
 	for _, m := range ri.Messages {
 		if m.Nil() {
@@ -275,7 +296,7 @@ func (sm *StateMachine) scrambled(op ScrambledOp) bool {
 		return false
 	}
 
-	if ri.numScrambled() != op.Prev {
+	if ri.numScrambled() != p {
 		return false
 	}
 
@@ -423,14 +444,15 @@ func (sm *StateMachine) DeepCopy() StateMachine {
 func (ri RoundInfo) DeepCopy() RoundInfo {
 	n := len(ri.Participants)
 	riCopy := RoundInfo{
-		Phase:        ri.Phase,
-		Crypto:       nil,
-		Participants: make([]uuid.UUID, n),
-		Messages:     make([]Msg, n),
-		Encrypted:    make([]bool, n),
-		Scrambled:    make([]bool, n),
-		Decrypted:    make([]bool, n),
-		RevealedKeys: make([]PrivateKey, n),
+		Phase:           ri.Phase,
+		Crypto:          nil,
+		Participants:    make([]uuid.UUID, n),
+		Messages:        make([]Msg, n),
+		Encrypted:       make([]bool, n),
+		Scrambled:       make([]bool, n),
+		Decrypted:       make([]bool, n),
+		RevealedKeys:    make([]PrivateKey, n),
+		RevealKeyHashes: make([][]byte, n),
 	}
 	if ri.Crypto != nil {
 		riCopy.Crypto = ri.Crypto.DeepCopy()
@@ -444,6 +466,10 @@ func (ri RoundInfo) DeepCopy() RoundInfo {
 	copy(riCopy.Decrypted, ri.Decrypted)
 	for i, pk := range ri.RevealedKeys {
 		riCopy.RevealedKeys[i] = pk.DeepCopy()
+	}
+	for i, b := range ri.RevealKeyHashes {
+		riCopy.RevealKeyHashes[i] = make([]byte, len(b))
+		copy(riCopy.RevealKeyHashes[i], b)
 	}
 	return riCopy
 }
@@ -474,4 +500,29 @@ func (sm *StateMachine) initRound(round int) {
 	sm.Rounds[round%NumRoundsPersisted] = RoundInfo{
 		Phase: PreparePhase,
 	}
+}
+
+// MayPrecede returns true if and only if the phase and round of sm
+// may come before the phase and round of sm2.
+func (sm *StateMachine) MayPrecede(sm2 StateMachine) bool {
+	if sm.Round < sm2.Round {
+		return true
+	}
+	if sm.Round > sm2.Round {
+		return false
+	}
+	phaseOrder := map[Phase]int{
+		PreparePhase:  0,
+		SubmitPhase:   1,
+		EncryptPhase:  2,
+		ScramblePhase: 3,
+		DecryptPhase:  4,
+		RevealPhase:   5,
+		DonePhase:     6,
+		FailedPhase:   7,
+	}
+	if phaseOrder[sm.CurrentRoundInfo().Phase] > phaseOrder[sm2.CurrentRoundInfo().Phase] {
+		return false
+	}
+	return true
 }

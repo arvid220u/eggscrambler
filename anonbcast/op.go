@@ -1,6 +1,8 @@
 package anonbcast
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+)
 
 type OpType string
 
@@ -58,11 +60,13 @@ func (op StartOp) Round() int {
 // If Round is not equal to the current round, or the current phase isn't SubmitPhase, it is a no-op.
 // If a participant with the given Id does not exist, it is a no-op (and logs a warning, because it should never happen with a legal client).
 // If a message for this user has already been submitted, it is overwritten.
+// If a reveal key hash for this user has already been submitted, it is overwritten.
 // If this is the last participant to submit a message, the state machine will transition to the EncryptPhase.
 type MessageOp struct {
-	Id      uuid.UUID
-	R       int
-	Message Msg
+	Id            uuid.UUID
+	R             int
+	Message       Msg
+	RevealKeyHash []byte
 }
 
 func (op MessageOp) Type() OpType {
@@ -98,16 +102,13 @@ func (op EncryptedOp) Round() int {
 // ScrambledOp announces that a participant has scrambled all messages.
 // If Round is not equal to the current round, or the current phase isn't ScramblePhase, it is a no-op.
 // If a participant with the given Id does not exist, it is a no-op (and logs a warning, because it should never happen with a legal client).
-// If Prev is not the previous number of participants who have scrambled, it is a no-op.
+// If not all participants with index < this participant's index have scrambled, it is a no-op.
 // If this participant has already scrambled, it is a no-op.
 // If this is the last participant to scramble, the state machine will transition to the DecryptPhase.
 type ScrambledOp struct {
 	Id       uuid.UUID
 	R        int
 	Messages []Msg
-	// Prev is the number of participants who have previously submitted a scrambled.
-	// This supports the test-and-set behavior.
-	Prev int
 }
 
 func (op ScrambledOp) Type() OpType {

@@ -2,6 +2,8 @@ package anonbcast
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"fmt"
 	"github.com/arvid220u/6.824-project/masseyomura"
 	"math/big"
 )
@@ -20,6 +22,17 @@ type Msg struct {
 
 func (m Msg) getM() *big.Int {
 	return bigInt(m.M)
+}
+func (m Msg) Equal(m2 Msg) (bool, error) {
+	if len(m.M) != len(m2.M) {
+		return false, fmt.Errorf("msg %v != msg %v", m, m2)
+	}
+	for i, b := range m.M {
+		if b != m2.M[i] {
+			return false, fmt.Errorf("msg %v != msg %v", m, m2)
+		}
+	}
+	return true, nil
 }
 
 func (m Msg) DeepCopy() Msg {
@@ -40,6 +53,26 @@ func NewMsg(m *big.Int) Msg {
 
 type PrivateKey struct {
 	E, D []byte
+}
+
+func (pk PrivateKey) Hash() []byte {
+	ed := make([]byte, len(pk.E)+len(pk.D))
+	copy(ed, pk.E)
+	copy(ed[len(pk.E):], pk.D)
+	hash := sha256.Sum256(ed)
+	return hash[:]
+}
+func (pk PrivateKey) HashEquals(hash []byte) (bool, error) {
+	meHash := pk.Hash()
+	if len(hash) != len(meHash) {
+		return false, fmt.Errorf("hash %v != hash %v", hash, meHash)
+	}
+	for i, b := range meHash {
+		if b != hash[i] {
+			return false, fmt.Errorf("hash %v != hash %v", hash, meHash)
+		}
+	}
+	return true, nil
 }
 
 func (pk PrivateKey) getE() *big.Int {

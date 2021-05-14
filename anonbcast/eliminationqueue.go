@@ -141,18 +141,10 @@ func compare(a Op, b Op) opComparison {
 		return opNewer
 	}
 
-	// we only have internal orderings within the encrypted, scrambled and decrypted phases
+	// we only have internal orderings within the encrypted and decrypted phases
 	switch as := a.(type) {
 	case EncryptedOp:
 		bs := b.(EncryptedOp)
-		if as.Prev < bs.Prev {
-			return opOlder
-		}
-		if as.Prev > bs.Prev {
-			return opNewer
-		}
-	case ScrambledOp:
-		bs := b.(ScrambledOp)
 		if as.Prev < bs.Prev {
 			return opOlder
 		}

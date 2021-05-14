@@ -99,10 +99,15 @@ type RoundResult struct {
 	// Round is the round we're looking at.
 	Round int
 	// Succeeded is true if the round resulted in the DonePhase
-	// and false if in FailedPhase.
+	// and no malicious failure was detected; false otherwise.
 	Succeeded bool
 	// Messages contains all the plaintext messages from this round.
 	Messages [][]byte
+	// MaliciousError is non-nil if an inconsistency was detected where a possible
+	// explanation is that a malicious user found the authors of some messages.
+	// If MaliciousError is nil, then it is guaranteed that no user was able to
+	// determine the origin of any messages.
+	MaliciousError error
 }
 
 type Messager interface {
@@ -121,7 +126,7 @@ func (c *Client) submitOp(op Op) error {
 	c.mu.Unlock()
 	ok := c.cp.Call(potentialLeader, "Server.SubmitOp", &op, &reply)
 	if !ok {
-		return errors.New("No response")
+		return errors.New("no response")
 	}
 	if reply.Err != OK {
 		return errors.New(string(reply.Err))
@@ -130,17 +135,34 @@ func (c *Client) submitOp(op Op) error {
 }
 
 // sendRoundResult is a helper method to readUpdates
-func (c *Client) sendRoundResult(sm StateMachine, round int) {
+func (c *Client) sendRoundResult(sm StateMachine, round int, revealKeyHashes [][]byte, revealKeyHashesRound int, messagesBeforeReveal []Msg, numberOfMessagesWhenScrambled int) {
 	ri, err := sm.GetRoundInfo(round - 1)
 	if err != nil {
 		c.assertf(false, "must be able to get previous round, error is %v", err)
 	}
 	c.assertf(ri.Phase == DonePhase || ri.Phase == FailedPhase, "must either fail or done")
+	// only send result if user participated
+	// otherwise, the user will not be able to verify the validity
+	me := false
+	for _, p := range ri.Participants {
+		if p == c.Id {
+			me = true
+		}
+	}
+	if !me {
+		c.logf(dInfo, "skipping round %d result because did not participate, so cannot verify", round-1)
+		return
+	}
 
 	if ri.Phase == FailedPhase {
 		result := RoundResult{
 			Round:     round - 1,
 			Succeeded: false,
+		}
+		if revealKeyHashesRound == round-1 {
+			// we potentially submitted our reveal key. so we cannot conclude that nothing bad happened
+			c.logf(dWarning, "someone maliciously failed the round")
+			result.MaliciousError = errors.New("reveal key submitted, so a malicious user may have obtained identities")
 		}
 		c.resChMu.Lock()
 		if c.resCh != nil {
@@ -150,30 +172,134 @@ func (c *Client) sendRoundResult(sm StateMachine, round int) {
 		return
 	}
 
+	c.assertf(revealKeyHashesRound == round-1, "reveal key state should be from this round, revealKeyHashesRound(%d) != round(%d)-1", revealKeyHashesRound, round)
+
+	// verify that we have equally many messages as we had when scrambling
+	// this ensures the invariant that we encrypt exactly n messages with the reveal key, and only report
+	// success if we are able to decrypt n messages with the reveal key later
+	if len(ri.Messages) != numberOfMessagesWhenScrambled {
+		// someone maliciously changed the messages :(
+		c.logf(dWarning, "someone maliciously changed the number of messages: %v", err)
+		result := RoundResult{
+			Round:          round - 1,
+			Succeeded:      false,
+			MaliciousError: fmt.Errorf("number of messages have changed since scramble phase, so a malicious user may have obtained identities: before (%d) != now (%d)", numberOfMessagesWhenScrambled, len(ri.Messages)),
+		}
+		c.resChMu.Lock()
+		if c.resCh != nil {
+			c.resCh <- result
+		}
+		c.resChMu.Unlock()
+		return
+	}
+
+	// verify that the messages haven't changed since we submitted the reveal key.
+	// otherwise, a malicious user that is the raft leader may update the message in response to other users' reveal keys
+	for i, m := range ri.Messages {
+		if ok, err := m.Equal(messagesBeforeReveal[i]); !ok {
+			// someone maliciously changed the messages :(
+			c.logf(dWarning, "someone maliciously changed the messages: %v", err)
+			result := RoundResult{
+				Round:          round - 1,
+				Succeeded:      false,
+				MaliciousError: fmt.Errorf("messages have changed since reveal phase, so a malicious user may have obtained identities: %v", err),
+			}
+			c.resChMu.Lock()
+			if c.resCh != nil {
+				c.resCh <- result
+			}
+			c.resChMu.Unlock()
+			return
+		}
+	}
+
 	var messages [][]byte
 	for _, m := range ri.Messages {
 		om := m
-		for _, revealKey := range ri.RevealedKeys {
+		for i, revealKey := range ri.RevealedKeys {
+			// assert that the hash is correct
+			if ok, err := revealKey.HashEquals(revealKeyHashes[i]); !ok {
+				// someone maliciously submitted an incorrect reveal key :(
+				c.logf(dWarning, "someone maliciously submitted an incorrect reveal key: %v", err)
+				result := RoundResult{
+					Round:          round - 1,
+					Succeeded:      false,
+					MaliciousError: fmt.Errorf("reveal key hash does not match, so a malicious user may have obtained identities: %v", err),
+				}
+				c.resChMu.Lock()
+				if c.resCh != nil {
+					c.resCh <- result
+				}
+				c.resChMu.Unlock()
+				return
+			}
 			om = ri.Crypto.Decrypt(revealKey, om)
 		}
 		messages = append(messages, ri.Crypto.ExtractMsg(om))
 	}
 	// now verify that messages have the right structure
 	var verifiedMessages [][]byte
+	var headers [][]byte
 	for _, m := range messages {
 		err = c.verifyHeader(m[:c.messageHeaderLength()])
 		if err != nil {
 			c.logf(dWarning, "header is incorrect! something bad happened this round: %v", err)
-			// TODO: transition this round into the failed phase, somehow
+			result := RoundResult{
+				Round:          round - 1,
+				Succeeded:      false,
+				MaliciousError: fmt.Errorf("header is invalid, so a malicious user may have obtained identities: %v", err),
+			}
+			c.resChMu.Lock()
+			if c.resCh != nil {
+				c.resCh <- result
+			}
+			c.resChMu.Unlock()
+			return
 		}
 		if len(m) > c.messageHeaderLength() {
 			verifiedMessages = append(verifiedMessages, m[c.messageHeaderLength():])
+			headers = append(headers, m[:c.messageHeaderLength()])
 		}
 	}
+
+	for i1, h1 := range headers {
+		for i2, h2 := range headers {
+			if i1 >= i2 {
+				continue
+			}
+			c.assertf(len(h1) == len(h2), "all headers have same length")
+			equal := true
+			for j, b := range h1 {
+				if b != h2[j] {
+					equal = false
+				}
+			}
+			if equal {
+				// someone maliciously duplicated a message to be able to track it
+				c.logf(dWarning, "duplicate header! something bad happened this round: %v", h1)
+				result := RoundResult{
+					Round:          round - 1,
+					Succeeded:      false,
+					MaliciousError: fmt.Errorf("header is duplicated, so a malicious user may have obtained identities: %v = %v", h1, h2),
+				}
+				c.resChMu.Lock()
+				if c.resCh != nil {
+					c.resCh <- result
+				}
+				c.resChMu.Unlock()
+				return
+			}
+		}
+	}
+
+	// we can finally be sure that nothing bad happened this round! all messages are guaranteed anonymous,
+	// so let's send them to the user.
+
 	result := RoundResult{
-		Round:     round - 1,
-		Succeeded: ri.Phase == DonePhase,
-		Messages:  verifiedMessages,
+		Round:          round - 1,
+		Succeeded:      ri.Phase == DonePhase,
+		Messages:       verifiedMessages,
+		MaliciousError: nil,
 	}
 	c.resChMu.Lock()
 	if c.resCh != nil {
@@ -236,7 +362,7 @@ func (c *Client) messageWithHeader(m []byte) []byte {
 }
 
 // submit is a helper method to readUpdates
-func (c *Client) submit(round int, ri *RoundInfo, me int, encryptKey PrivateKey) {
+func (c *Client) submit(round int, ri *RoundInfo, me int, encryptKey PrivateKey, revealKey PrivateKey) {
 	if ri.Messages[me].Nil() {
 		msgChan := make(chan []byte)
 		go func(msgChan chan []byte, round int) {
@@ -259,9 +385,10 @@ func (c *Client) submit(round int, ri *RoundInfo, me int, encryptKey PrivateKey)
 		}
 		encryptedM := ri.Crypto.Encrypt(encryptKey, m)
 		op := MessageOp{
-			Id:      c.Id,
-			R:       round,
-			Message: encryptedM,
+			Id:            c.Id,
+			R:             round,
+			Message:       encryptedM,
+			RevealKeyHash: revealKey.Hash(),
 		}
 		c.pending.add(op)
 	}
@@ -297,12 +424,6 @@ func (c *Client) encrypt(round int, ri *RoundInfo, me int, encryptKey PrivateKey
 // scramble is a helper method to readUpdates
 func (c *Client) scramble(round int, ri *RoundInfo, me int, scrambleKey PrivateKey, revealKey PrivateKey) {
 	if !ri.Scrambled[me] {
-		prev := 0
-		for _, scrambled := range ri.Scrambled {
-			if scrambled {
-				prev++
-			}
-		}
 		var scrambledMessages []Msg
 		// first encrypt each message once with each key
 		for _, m := range ri.Messages {
@@ -318,7 +439,6 @@ func (c *Client) scramble(round int, ri *RoundInfo, me int, scrambleKey PrivateK
 			Id:       c.Id,
 			R:        round,
 			Messages: scrambledMessages,
-			Prev:     prev,
 		}
 		c.pending.add(op)
 	}
@@ -378,6 +498,16 @@ func (c *Client) readUpdates() {
 	var revealKey PrivateKey
 	lastKeyGen := -1
 
+	// these are for consistency checks, because the leader may lie to us
+	var lastRevealKeyHashes [][]byte
+	var lastMessagesBeforeReveal []Msg
+	lastRevealKeyHashesRound := -1
+	lastNumberOfMessageWhenScrambled := 0
+	lastScrambledRound := -1
+
+	var lastSm StateMachine
+	lastSm.initRound(0)
+
 	// in this loop, all heavy work is done in goroutines. this is because the server always expects
 	// to be able to send on the updCh.
 	for !c.killed() {
@@ -386,6 +516,8 @@ func (c *Client) readUpdates() {
 		if updMsg.StateMachineValid {
 			sm := updMsg.StateMachine
 			c.logf(dInfo, "received state machine update! %+v", sm)
+			c.assertf(lastSm.MayPrecede(sm), "lastSm must be able to precede sm2: %v !>= %v", lastSm, sm)
+			lastSm = sm
 
 			go c.lastUpdate.set(sm, version)
 			version++
@@ -404,7 +536,17 @@ func (c *Client) readUpdates() {
 				if round-1 > lastResChSend {
 					// send the result of the previous round!
 					c.assertf(lastResChSend == round-2, "required to be true because updates are in order")
-					go c.sendRoundResult(sm, round)
+					// we don't just read from the raft state because the raft state may be malicious
+					revealKeyHashes := make([][]byte, len(lastRevealKeyHashes))
+					for i, hash := range lastRevealKeyHashes {
+						revealKeyHashes[i] = make([]byte, len(hash))
+						copy(revealKeyHashes[i], hash)
+					}
+					messagesBeforeReveal := make([]Msg, len(lastMessagesBeforeReveal))
+					for i, msg := range lastMessagesBeforeReveal {
+						messagesBeforeReveal[i] = msg.DeepCopy()
+					}
+					go c.sendRoundResult(sm, round, revealKeyHashes, lastRevealKeyHashesRound, messagesBeforeReveal, lastNumberOfMessageWhenScrambled)
 					lastResChSend = round - 1
 				}
 
@@ -436,7 +578,7 @@ func (c *Client) readUpdates() {
 				}
 				// we want to make sure that we only ask the user for a message once per round
 				if round > lastMessageRound {
-					go c.submit(round, ri, me, encryptKey.DeepCopy())
+					go c.submit(round, ri, me, encryptKey.DeepCopy(), revealKey.DeepCopy())
 					lastMessageRound = round
 				}
 			case EncryptPhase:
@@ -450,7 +592,17 @@ func (c *Client) readUpdates() {
 					// we don't have any business in this round
 					continue
 				}
-				go c.scramble(round, ri, me, scrambleKey.DeepCopy(), revealKey.DeepCopy())
+				// we only scramble once!!! this is very important to ensure we are safe from attacks
+				if round > lastScrambledRound {
+					if me != ri.numScrambled() {
+						// not our turn to scramble
+						continue
+					}
+
+					lastNumberOfMessageWhenScrambled = len(ri.Messages)
+					go c.scramble(round, ri, me, scrambleKey.DeepCopy(), revealKey.DeepCopy())
+					lastScrambledRound = round
+				}
 			case DecryptPhase:
 				if !c.getActiveUnlocked() || me == -1 {
 					// we don't have any business in this round
@@ -461,6 +613,18 @@ func (c *Client) readUpdates() {
 				if !c.getActiveUnlocked() || me == -1 {
 					// we don't have any business in this round
 					continue
+				}
+				if round > lastRevealKeyHashesRound {
+					lastRevealKeyHashes = make([][]byte, len(ri.RevealKeyHashes))
+					for i, hash := range ri.RevealKeyHashes {
+						lastRevealKeyHashes[i] = make([]byte, len(hash))
+						copy(lastRevealKeyHashes[i], hash)
+					}
+					lastMessagesBeforeReveal = make([]Msg, len(ri.Messages))
+					for i, msg := range ri.Messages {
+						lastMessagesBeforeReveal[i] = msg.DeepCopy()
+					}
+					lastRevealKeyHashesRound = round
 				}
 				go c.reveal(round, ri, me, revealKey.DeepCopy())
 			default:
@@ -659,7 +823,7 @@ func (c *Client) getLeavingUnlocked() bool {
 }
 
 // CreateResCh returns a channel on which the results of rounds are sent.
-// sent. Each round result will be sent exactly once, but it is not
+// sent. Each round result that the user participated in will be sent exactly once, but it is not
 // guaranteed that the results will be sent in order, if, for example,
 // the user application does not continuously read from the channel.
 //

@@ -247,7 +247,7 @@ func TestAbortSubmitTimeout(t *testing.T) {
 	cfg := make_config(t, servers, false, -1)
 	defer cfg.cleanup()
 	cfg.begin("Abort timeout with disconnected client.")
-	time.Sleep(3 * time.Second) // wait for everyone to become participant
+	time.Sleep(5 * time.Second) // wait for everyone to become participant
 
 	initialConfiguration := make(map[int]bool)
 	liveConfiguration := make(map[int]bool)
@@ -284,7 +284,7 @@ func TestAbortClientKilled(t *testing.T) {
 	cfg := make_config(t, servers, false, -1)
 	defer cfg.cleanup()
 	cfg.begin("Abort caused by dead client.")
-	time.Sleep(3 * time.Second) // wait for everyone to become participant
+	time.Sleep(5 * time.Second) // wait for everyone to become participant
 
 	initialConfiguration := make(map[int]bool)
 	for i := 0; i < servers; i++ {
