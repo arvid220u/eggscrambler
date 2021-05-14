@@ -1,4 +1,4 @@
-package commutencrypt
+package elgamal
 
 import (
 	"crypto/rand"
