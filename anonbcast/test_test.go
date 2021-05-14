@@ -159,17 +159,49 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	s.Kill()
 }
 
-func TestRaftSimple(t *testing.T) {
+func TestReliableNetBasic(t *testing.T) {
 	cfg := make_config(t, 3, false, -1)
 	defer cfg.cleanup()
-	cfg.begin("Sample Text")
-	time.Sleep(3 * time.Second)
+	cfg.begin("Basic broadcast over reliable network")
+	time.Sleep(3 * time.Second) // generous amount of time for leader election
 
 	round := 0
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
+		fmt.Printf("Attempting broadcast round %d\n", i)
 		round = cfg.oneRound(round) + 1
-		time.Sleep(5 * time.Second)
+		time.Sleep(1 * time.Second) // probably could be much shorter
 	}
 
 	cfg.end()
+}
+
+func TestUnreliableNetBasic(t *testing.T) {
+	cfg := make_config(t, 3, true, -1)
+	defer cfg.cleanup()
+	cfg.begin("Basic broadcast over unreliable network")
+	time.Sleep(3 * time.Second) // generous amount of time for leader election
+
+	round := 0
+	for i := 0; i < 10; i++ {
+		fmt.Printf("Attempting broadcast round %d\n", i)
+		round = cfg.oneRound(round) + 1
+		time.Sleep(1 * time.Second) // probably could be much shorter
+	}
+
+	cfg.end()
+}
+
+func TestParticipantsAllInInitialConfiguration(t *testing.T) {
+	servers := 3
+	expectedConfiguration := make(map[int]bool)
+	for i := 0; i < servers; i++ {
+		expectedConfiguration[i] = true
+	}
+
+	cfg := make_config(t, 3, false, -1)
+	defer cfg.cleanup()
+	cfg.begin("Checking all participants present when all servers in configuration")
+	time.Sleep(3 * time.Second)
+
+	cfg.checkConfigurationMatchesParticipants(expectedConfiguration)
 }

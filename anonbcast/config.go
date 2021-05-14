@@ -67,6 +67,8 @@ type config struct {
 	rpcs0 int       // rpcTotal() at start of test
 	ops   int32     // number of clerk get/put/append method calls
 
+	initialConfiguration map[int]bool
+
 	orderedClientIds []uuid.UUID //client ids, where index corresponds to client's server
 	orderedMessagers []Messager  // messager, where index corresponds to messager's client's server
 }
@@ -343,12 +345,9 @@ func (cfg *config) ShutdownServer(i int) {
 func (cfg *config) StartServer(i int) {
 	cfg.mu.Lock()
 
-	// TODO change to make this an argument
-	initialCfg := make(map[int]bool)
 	// a fresh set of outgoing ClientEnd names.
 	cfg.endnames[i] = make([]string, cfg.n)
 	for j := 0; j < cfg.n; j++ {
-		initialCfg[j] = true
 		cfg.endnames[i][j] = randstring(20)
 	}
 
@@ -372,7 +371,7 @@ func (cfg *config) StartServer(i int) {
 	cfg.mu.Unlock()
 
 	cp := network.New(ends)
-	cfg.servers[i] = MakeServer(cp, i, initialCfg, cfg.saved[i], cfg.maxraftstate)
+	cfg.servers[i] = MakeServer(cp, i, cfg.initialConfiguration, cfg.saved[i], cfg.maxraftstate)
 
 	anonsvc := labrpc.MakeService(cfg.servers[i])
 	rfsvc := labrpc.MakeService(cfg.servers[i].rf)
@@ -428,7 +427,7 @@ func (cfg *config) make_partition() ([]int, []int) {
 
 var ncpu_once sync.Once
 
-func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config {
+func make_config_with_initial_config(t *testing.T, n int, unreliable bool, maxraftstate int, initialConfiguration map[int]bool) *config {
 	ncpu_once.Do(func() {
 		if runtime.NumCPU() < 2 {
 			fmt.Printf("warning: only one CPU, which may conceal locking bugs\n")
@@ -448,6 +447,7 @@ func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config
 	cfg.start = time.Now()
 	cfg.orderedClientIds = make([]uuid.UUID, cfg.n)
 	cfg.orderedMessagers = make([]Messager, cfg.n)
+	cfg.initialConfiguration = initialConfiguration
 
 	// create a full set of KV servers.
 	for i := 0; i < cfg.n; i++ {
@@ -459,6 +459,15 @@ func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config
 	cfg.net.Reliable(!unreliable)
 
 	return cfg
+}
+
+func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config {
+	initialConfiguration := make(map[int]bool)
+	for i := 0; i < n; i++ {
+		initialConfiguration[i] = true
+	}
+
+	return make_config_with_initial_config(t, n, unreliable, maxraftstate, initialConfiguration)
 }
 
 func (cfg *config) rpcTotal() int {
@@ -499,6 +508,7 @@ func (cfg *config) end() {
 // Assuming at least 1 client has been created using the default generator,
 // completes one broadcast round
 // Returns the current round at the end of the process.
+// Only use this in a configuration with automatic, deterministic Messagers
 func (cfg *config) oneRound(round int) int {
 	c1Id := cfg.orderedClientIds[0]
 	mg1 := cfg.orderedMessagers[0]
@@ -518,7 +528,6 @@ func (cfg *config) oneRound(round int) int {
 	go ro.order(results, orderedResults, round)
 	for i := 0; i < 2; i++ {
 		actualRound := round + i
-		fmt.Printf("XXX Starting round %d\n", actualRound) // TODO remove
 
 		if i%2 == 0 {
 			// race to the start
@@ -528,12 +537,10 @@ func (cfg *config) oneRound(round int) int {
 				err = c1.Start(actualRound)
 			}
 
-			fmt.Printf("XXX Successful Start 1\n")
 		} else {
 			// wait for everyone to submit :)
 			sm1 := c1.GetLastStateMachine()
 			for sm1.Round != actualRound || len(sm1.CurrentRoundInfo().Participants) < cfg.n {
-				fmt.Printf("XXX 1 Waiting for actual round %d: %d or participants: %d\n", actualRound, sm1.Round, sm1.CurrentRoundInfo().Participants)
 				time.Sleep(time.Millisecond * 5)
 				sm1 = c1.GetLastStateMachine()
 			}
@@ -541,11 +548,8 @@ func (cfg *config) oneRound(round int) int {
 			if err != nil {
 				cfg.t.Fatalf("problem occurred in start should never happen: %v", err)
 			}
-			fmt.Printf("XXX Successful Start 2\n")
 		}
 		r := <-orderedResults
-
-		fmt.Printf("XXX Got results\n")
 
 		if r.Round != actualRound {
 			cfg.t.Fatalf("Round %d not equal to round %d", r.Round, actualRound)
@@ -558,7 +562,6 @@ func (cfg *config) oneRound(round int) int {
 			expectedMessages = [][]byte{mg1.Message(r.Round)}
 			sm1 := c1.GetLastStateMachine()
 			for sm1.Round != r.Round+1 {
-				fmt.Printf("XXX 1 Waiting for actual round %d: %d\n", r.Round+1, sm1.Round)
 				time.Sleep(time.Millisecond * 5)
 				sm1 = c1.GetLastStateMachine()
 			}
@@ -616,4 +619,50 @@ func equalContents(s1 []string, s2 []string) bool {
 		}
 	}
 	return true
+}
+
+// Checks that the clients participating in a round have raft servers that are in the configuration
+// Should be called when participants are stable - will be unreliable if called during an active round
+// Or soon after a client attempted to add/remove itself from the configuration
+func (cfg *config) checkConfigurationMatchesParticipants(expectedConfiguration map[int]bool) {
+	activeClientIds := cfg.getActiveClientIds(expectedConfiguration)
+	activeClient := cfg.getActiveClient(expectedConfiguration)
+	sm := activeClient.GetLastStateMachine() // XXX I don't think I should DeepCopy here but maybe I should?
+	participants := sm.CurrentRoundInfo().Participants
+	if len(participants) != len(activeClientIds) {
+		cfg.t.Fatalf("Configuration %v doesn't match participants %v\n", activeClientIds, participants)
+	}
+	for _, p := range participants {
+		if _, ok := activeClientIds[p]; !ok {
+			cfg.t.Fatalf("Configuration %v doesn't match participants %v\n", activeClientIds, participants)
+		}
+	}
+
+}
+
+func (cfg *config) getActiveClientIds(expectedConfiguration map[int]bool) map[uuid.UUID]bool {
+	activeClientIds := make(map[uuid.UUID]bool)
+	for s := range expectedConfiguration {
+		activeClientIds[cfg.orderedClientIds[s]] = true
+	}
+
+	return activeClientIds
+}
+
+func (cfg *config) getActiveClient(expectedConfiguration map[int]bool) *Client {
+	var cId uuid.UUID
+	for s := range expectedConfiguration {
+		cId = cfg.orderedClientIds[s]
+		break
+	}
+
+	for cl := range cfg.clients {
+		if cId == cl.Id {
+			return cl
+		}
+	}
+
+	cfg.t.Fatalf("Couldn't find active client given server configuration %v", expectedConfiguration)
+	// Should be unreachable, idk what the right way to do this is
+	return nil
 }
