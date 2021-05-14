@@ -22,6 +22,9 @@ import (
 	"github.com/google/uuid"
 )
 
+const TEST_PROTOCOL_TIMEOUT = 5 * time.Second
+const TEST_MESSAGE_TIMEOUT = 5 * time.Second
+
 func randstring(n int) string {
 	b := make([]byte, 2*n)
 	crand.Read(b)
@@ -242,7 +245,7 @@ func (mg messageGenerator) Message(round int) []byte {
 	return []byte(fmt.Sprintf("message in round %d from %s", round, mg.id))
 }
 
-// Create a clerk with clerk specific server names.
+// Create a Client with Client specific server names.
 // Give it connections to all of the servers, but for
 // now enable only connections to servers in to[].
 // Client is assumed to be running on the same machine as localSrv
@@ -261,8 +264,8 @@ func (cfg *config) makeClient(m Messager, localSrv int, to []int) *Client {
 
 	cp := network.New(random_handles(ends))
 	clcf := ClientConfig{ // TODO: tune these parameters? should they be passed into makeClient
-		MessageTimeout:  time.Second * 30,
-		ProtocolTimeout: time.Second * 10,
+		MessageTimeout:  TEST_MESSAGE_TIMEOUT,
+		ProtocolTimeout: TEST_PROTOCOL_TIMEOUT,
 		MessageSize:     100,
 	}
 	cl := NewClient(cfg.servers[localSrv], m, cp, clcf)
@@ -312,6 +315,17 @@ func (cfg *config) DisconnectClient(cl *Client, from []int) {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
 	cfg.DisconnectClientUnlocked(cl, from)
+}
+
+func (cfg *config) DisconnectClientById(clId uuid.UUID, from []int) {
+	var clDisc *Client
+	for cl := range cfg.clients {
+		if cl.Id == clId {
+			clDisc = cl
+		}
+	}
+
+	cfg.DisconnectClient(clDisc, from)
 }
 
 // Shutdown a server by isolating it
@@ -674,4 +688,16 @@ func (cfg *config) getActiveClient(expectedConfiguration map[int]bool) (uuid.UUI
 	cfg.t.Fatalf("Couldn't find active client given server configuration %v", expectedConfiguration)
 	// Should be unreachable, idk what the right way to do this is
 	return uuid.UUID{}, nil, nil
+}
+
+func (cfg *config) getClientById(clId uuid.UUID) *Client {
+	for cl := range cfg.clients {
+		if cl.Id == clId {
+			return cl
+		}
+	}
+
+	cfg.t.Fatalf("Found no client with id %d", clId)
+	// Should be unreachable
+	return nil
 }

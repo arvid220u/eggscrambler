@@ -430,11 +430,8 @@ func (c *Client) readUpdates() {
 				}
 				// we want to make sure that we only ask the user for a message once per round
 				if round > lastMessageRound {
-					c.logf(dInfo, "Going to call submit for round %d", round)
 					go c.submit(round, ri, me, encryptKey.DeepCopy())
 					lastMessageRound = round
-				} else {
-					c.logf(dInfo, "Already submitted message for round %d. Waiting", round)
 				}
 			case EncryptPhase:
 				if !c.getActiveUnlocked() || me == -1 {

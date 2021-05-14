@@ -236,5 +236,75 @@ func TestParticipantsOneNotInInitialConfiguration(t *testing.T) {
 
 	next := cfg.oneRoundWithExpectedConfiguration(0, initialConfiguration) + 1
 	time.Sleep(1 * time.Second)
+	// Initially excluded client should be in this round
 	cfg.oneRoundWithExpectedConfiguration(next, expectedConfiguration)
+}
+
+func TestAbortSubmitTimeout(t *testing.T) {
+	servers := 4
+	indexToDisconnect := 0
+	cfg := make_config(t, servers, false, -1)
+	defer cfg.cleanup()
+	cfg.begin("Abort timeout with disconnected client.")
+	time.Sleep(3 * time.Second) // wait for everyone to become participant
+
+	initialConfiguration := make(map[int]bool)
+	liveConfiguration := make(map[int]bool)
+	for i := 0; i < servers; i++ {
+		if i != indexToDisconnect {
+			liveConfiguration[i] = true
+		}
+		initialConfiguration[i] = true
+	}
+
+	// make sure all servers are in the round
+	cfg.checkConfigurationMatchesParticipants(initialConfiguration)
+
+	clIdToDisconnect := cfg.orderedClientIds[indexToDisconnect]
+	cfg.DisconnectClientById(clIdToDisconnect, cfg.All())
+	_, activeClient, _ := cfg.getActiveClient(liveConfiguration)
+	activeClient.Start(0)
+	time.Sleep(TEST_MESSAGE_TIMEOUT + TEST_PROTOCOL_TIMEOUT + time.Second) // submit timeout is message+protocol timeout, we add 1 second because goroutines might mess up timing
+	fmt.Println("Wokeup")
+	sm := activeClient.GetLastStateMachine()
+	ri, err := sm.GetRoundInfo(0)
+	if err != nil {
+		t.Fatalf("Got error when requesting round info: %v", err)
+	}
+
+	if ri.Phase != FailedPhase {
+		t.Fatalf("Expected round to fail but got phase %v", ri.Phase)
+	}
+}
+
+func TestAbortClientKilled(t *testing.T) {
+	servers := 4
+	indexToKill := 0
+	cfg := make_config(t, servers, false, -1)
+	defer cfg.cleanup()
+	cfg.begin("Abort caused by dead client.")
+	time.Sleep(3 * time.Second) // wait for everyone to become participant
+
+	initialConfiguration := make(map[int]bool)
+	for i := 0; i < servers; i++ {
+		initialConfiguration[i] = true
+	}
+
+	// make sure all servers are in the round
+	cfg.checkConfigurationMatchesParticipants(initialConfiguration)
+
+	clToKill := cfg.getClientById(cfg.orderedClientIds[indexToKill])
+	_, activeClient, _ := cfg.getActiveClient(initialConfiguration)
+	activeClient.Start(0)
+	clToKill.Kill()             // TODO this isn't a reliable way to get the round to fail in time
+	time.Sleep(3 * time.Second) // wait for it to propagate
+	sm := activeClient.GetLastStateMachine()
+	ri, err := sm.GetRoundInfo(0)
+	if err != nil {
+		t.Fatalf("Got error when requesting round info: %v", err)
+	}
+
+	if ri.Phase != FailedPhase {
+		t.Fatalf("Expected round to fail but got phase %v", ri.Phase)
+	}
 }

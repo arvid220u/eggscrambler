@@ -243,7 +243,9 @@ func (s *Server) GetUpdCh() (<-chan UpdateMsg, int) {
 func (s *Server) CloseUpdCh(index int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	close(s.updChs[index])
+	if s.updChs[index] != nil {
+		close(s.updChs[index])
+	}
 	delete(s.updChs, index)
 }
 
