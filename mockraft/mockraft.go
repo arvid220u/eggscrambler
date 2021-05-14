@@ -52,7 +52,9 @@ func (m *Mockraft) GetProvisionalConfiguration() (bool, map[int]bool) {
 
 // Implemented as no-op as it shouldn't be called on mockraft
 func (m *Mockraft) GetCurrentConfiguration() (bool, map[int]bool) {
-	return true, make(map[int]bool)
+	mp := make(map[int]bool)
+	mp[0] = true
+	return true, mp
 }
 
 // Implemented as no-op as it shouldn't be called on mockraft

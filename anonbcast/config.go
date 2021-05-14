@@ -528,10 +528,11 @@ func (cfg *config) oneRoundWithExpectedConfiguration(round int, expectedConfigur
 	fmt.Printf("Starting round %d\n", round)
 	c1Id, c1, mg1 := cfg.getActiveClient(expectedConfiguration)
 
-	results := c1.GetResCh()
+	results := c1.CreateResCh()
 	orderedResults := make(chan RoundResult)
 	ro := &resultOrderer{}
 	defer ro.kill()
+	defer c1.DestroyResCh(results)
 	go ro.order(results, orderedResults, round)
 	for i := 0; i < 2; i++ {
 		actualRound := round + i

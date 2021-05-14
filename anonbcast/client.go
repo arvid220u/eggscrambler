@@ -66,7 +66,8 @@ type Client struct {
 	currConf           []int
 	lastKnownLeaderInd int
 
-	resCh chan RoundResult
+	resCh   chan RoundResult
+	resChMu sync.Mutex
 
 	// pending stores the operations that are pending submission to the leader
 	pending *eliminationQueue
@@ -116,8 +117,9 @@ type Messager interface {
 func (c *Client) submitOp(op Op) error {
 	var reply OpRpcReply
 	c.mu.Lock()
-	ok := c.cp.Call(c.currConf[c.lastKnownLeaderInd], "Server.SubmitOp", &op, &reply)
+	potentialLeader := c.currConf[c.lastKnownLeaderInd]
 	c.mu.Unlock()
+	ok := c.cp.Call(potentialLeader, "Server.SubmitOp", &op, &reply)
 	if !ok {
 		return errors.New("No response")
 	}
@@ -140,9 +142,11 @@ func (c *Client) sendRoundResult(sm StateMachine, round int) {
 			Round:     round - 1,
 			Succeeded: false,
 		}
+		c.resChMu.Lock()
 		if c.resCh != nil {
 			c.resCh <- result
 		}
+		c.resChMu.Unlock()
 		return
 	}
 
@@ -171,9 +175,11 @@ func (c *Client) sendRoundResult(sm StateMachine, round int) {
 		Succeeded: ri.Phase == DonePhase,
 		Messages:  verifiedMessages,
 	}
+	c.resChMu.Lock()
 	if c.resCh != nil {
 		c.resCh <- result
 	}
+	c.resChMu.Unlock()
 }
 
 // prepare is a helper method to readUpdates
@@ -569,7 +575,9 @@ func (c *Client) updateLeader() {
 
 // Kill kills all long-running goroutines and releases any memory
 // used by the Client instance. After calling Kill no other methods
-// may be called.
+// may be called, except DestroyResCh.
+//
+// Remember to call DestroyResCh too if CreateResCh was ever called.
 func (c *Client) Kill() {
 	// submit an abort operation here if the last state machine includes this user
 	// and the round isn't done or failed
@@ -582,11 +590,19 @@ func (c *Client) Kill() {
 			}
 		}
 		if me {
+			c.logf(dInfo, "aborting round %d because i am getting killed", sm.Round)
 			op := AbortOp{R: sm.Round}
 			// we don't care if the operation succeeds or not; it's fine if it does not. in that case,
 			// the protocol will simply time out.
 			_ = c.submitOp(op)
 		}
+	}
+	// lock here to make sure that the operations after this point happen exactly once,
+	// even if Kill is called multiple times
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.killed() {
+		return
 	}
 	// close the upd channel
 	c.closeUpdCh()
@@ -642,15 +658,36 @@ func (c *Client) getLeavingUnlocked() bool {
 	return tempLeaving
 }
 
-// GetResCh returns a channel on which the results of rounds are sent.
+// CreateResCh returns a channel on which the results of rounds are sent.
 // sent. Each round result will be sent exactly once, but it is not
 // guaranteed that the results will be sent in order, if, for example,
 // the user application does not continuously read from the channel.
 //
-// This method may only be called once.
-func (c *Client) GetResCh() <-chan RoundResult {
+// This method may only be called after an equal number of CreateResCh and DestroyResCh
+// have been called and returned.
+func (c *Client) CreateResCh() <-chan RoundResult {
+	c.resChMu.Lock()
+	defer c.resChMu.Unlock()
+	c.assertf(c.resCh == nil, "may only call CreateResCh if it is currently nil")
 	c.resCh = make(chan RoundResult)
 	return c.resCh
+}
+
+// DestroyResCh destroys the result channel, meaning that the user after calling this
+// no longer need to be continuously reading from the channel.
+//
+// This method may only be called ONCE after CreateResCh has been called and returned.
+func (c *Client) DestroyResCh(resCh <-chan RoundResult) {
+	// eat from the channel until it is closed
+	go func(ch <-chan RoundResult) {
+		for range ch {
+		}
+	}(resCh)
+	c.resChMu.Lock()
+	defer c.resChMu.Unlock()
+	c.assertf(c.resCh != nil, "may only call DestroyResCh if it is not currently nil")
+	close(c.resCh)
+	c.resCh = nil
 }
 
 // GetLastStateMachine returns the last known version of the state machine.

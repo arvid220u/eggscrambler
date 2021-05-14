@@ -12,21 +12,23 @@ import (
 // in the raft configuration.
 func (c *Client) getMembership(isProvisionalReq bool) bool {
 	args := InConfigurationArgs{Server: c.serverId, IsProvisionalReq: isProvisionalReq}
-	reply := InConfigurationReply{}
+	inConfiguration := false
 	for !c.killed() {
+		reply := InConfigurationReply{}
 		c.mu.Lock()
-		ok := c.cp.Call(c.currConf[c.lastKnownLeaderInd], "Server.InConfiguration", &args, &reply)
+		potentialLeader := c.currConf[c.lastKnownLeaderInd]
 		c.mu.Unlock()
+		ok := c.cp.Call(potentialLeader, "Server.InConfiguration", &args, &reply)
+		inConfiguration = reply.InConfiguration
 		if !ok || !reply.IsLeader {
 			c.updateLeader()
 			time.Sleep(5 * time.Millisecond)
 			continue
 		}
-
 		break
 	}
 
-	return reply.InConfiguration
+	return inConfiguration
 }
 
 // Polls the leader server to determine whether this server
@@ -43,11 +45,12 @@ func (c *Client) setActive() {
 // otherwise returns false, meaning the caller must check if the request has committed
 func (c *Client) attemptProvisional() bool {
 	args := AddProvisionalArgs{Server: c.serverId}
-	reply := AddProvisionalReply{}
 	for !c.killed() {
+		reply := AddProvisionalReply{}
 		c.mu.Lock()
-		ok := c.cp.Call(c.currConf[c.lastKnownLeaderInd], "Server.AddProvisional", &args, &reply)
+		potentialLeader := c.currConf[c.lastKnownLeaderInd]
 		c.mu.Unlock()
+		ok := c.cp.Call(potentialLeader, "Server.AddProvisional", &args, &reply)
 		if !ok || reply.Error == raft.AP_NOT_LEADER {
 			c.updateLeader()
 			continue
@@ -70,11 +73,14 @@ func (c *Client) attemptProvisional() bool {
 
 func (c *Client) attemptAddRemove(isAdd bool) raft.AddRemoveServerError {
 	args := AddRemoveArgs{Server: c.serverId, IsAdd: isAdd}
-	reply := AddRemoveReply{}
+	var arError raft.AddRemoveServerError
 	for !c.killed() {
+		reply := AddRemoveReply{}
 		c.mu.Lock()
-		ok := c.cp.Call(c.currConf[c.lastKnownLeaderInd], "Server.AddRemove", &args, &reply)
+		potentialLeader := c.currConf[c.lastKnownLeaderInd]
 		c.mu.Unlock()
+		ok := c.cp.Call(potentialLeader, "Server.AddRemove", &args, &reply)
+		arError = reply.Error
 		if !ok || reply.Error == raft.AR_NOT_LEADER {
 			c.updateLeader()
 			continue
@@ -86,7 +92,7 @@ func (c *Client) attemptAddRemove(isAdd bool) raft.AddRemoveServerError {
 		break
 	}
 
-	return reply.Error
+	return arError
 }
 
 // Makes the appropriate requests to become provisional.

@@ -95,7 +95,8 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 		MessageSize:     100,
 	}
 	c1 := NewClient(s, mg1, cp1, clcf)
-	results := c1.GetResCh()
+	results := c1.CreateResCh()
+	defer c1.DestroyResCh(results)
 	orderedResults := make(chan RoundResult)
 	ro := &resultOrderer{}
 	go ro.order(results, orderedResults, 0)
@@ -294,7 +295,7 @@ func TestAbortClientKilled(t *testing.T) {
 	cfg.checkConfigurationMatchesParticipants(initialConfiguration)
 
 	clToKill := cfg.getClientById(cfg.orderedClientIds[indexToKill])
-	_, activeClient, _ := cfg.getActiveClient(initialConfiguration)
+	activeClient := cfg.getClientById(cfg.orderedClientIds[indexToKill+1])
 	activeClient.Start(0)
 	clToKill.Kill()             // TODO this isn't a reliable way to get the round to fail in time
 	time.Sleep(3 * time.Second) // wait for it to propagate

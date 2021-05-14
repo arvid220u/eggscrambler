@@ -93,7 +93,8 @@ func main() {
 	}
 	c1 := anonbcast.NewClient(s, cg1, cp1, clcf)
 	defer c1.Kill()
-	results := c1.GetResCh()
+	results := c1.CreateResCh()
+	defer c1.DestroyResCh(results)
 	orderedResults := make(chan anonbcast.RoundResult)
 	go resultOrderer(results, orderedResults)
 	c2 := anonbcast.NewClient(s, cg2, cp2, clcf)
