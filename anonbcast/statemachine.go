@@ -106,7 +106,7 @@ func (ri *RoundInfo) checkRep() {
 	ri.assertf(len(ri.Participants) == len(ri.Scrambled), "must be equally many participants for each field!")
 	ri.assertf(len(ri.Participants) == len(ri.Decrypted), "must be equally many participants for each field!")
 	ri.assertf(len(ri.Participants) == len(ri.RevealedKeys), "must be equally many participants for each field!")
-	ri.assertf(ri.Phase == "" || ri.Phase == PreparePhase || ri.Crypto != nil, "crypto must not be nil if left prepare phase")
+	ri.assertf(ri.Phase == "" || ri.Phase == PreparePhase || ri.Phase == FailedPhase || ri.Crypto != nil, "crypto must not be nil if left prepare phase")
 	ri.assertf(ri.Phase != PreparePhase || ri.Crypto == nil, "crypto must be nil if not left prepare phase")
 
 	for i1, p1 := range ri.Participants {

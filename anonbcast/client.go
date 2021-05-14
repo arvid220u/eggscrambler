@@ -53,7 +53,8 @@ type Client struct {
 	// lastUpdate stores the last update received on the state machine
 	lastUpdate *lastStateMachine
 
-	updCh <-chan UpdateMsg
+	updCh      <-chan UpdateMsg
+	closeUpdCh func()
 
 	// Indicates whether the underlying raft server
 	// is in the configuration or not
@@ -132,6 +133,18 @@ func (c *Client) sendRoundResult(sm StateMachine, round int) {
 		c.assertf(false, "must be able to get previous round, error is %v", err)
 	}
 	c.assertf(ri.Phase == DonePhase || ri.Phase == FailedPhase, "must either fail or done")
+
+	if ri.Phase == FailedPhase {
+		result := RoundResult{
+			Round:     round - 1,
+			Succeeded: false,
+		}
+		if c.resCh != nil {
+			c.resCh <- result
+		}
+		return
+	}
+
 	var messages [][]byte
 	for _, m := range ri.Messages {
 		om := m
@@ -551,9 +564,27 @@ func (c *Client) updateLeader() {
 // used by the Client instance. After calling Kill no other methods
 // may be called.
 func (c *Client) Kill() {
+	// submit an abort operation here if the last state machine includes this user
+	// and the round isn't done or failed
+	sm := c.lastUpdate.get()
+	if sm.CurrentRoundInfo().Phase != DonePhase && sm.CurrentRoundInfo().Phase != FailedPhase {
+		me := false
+		for _, p := range sm.CurrentRoundInfo().Participants {
+			if p == c.Id {
+				me = true
+			}
+		}
+		if me {
+			op := AbortOp{R: sm.Round}
+			// we don't care if the operation succeeds or not; it's fine if it does not. in that case,
+			// the protocol will simply time out.
+			_ = c.submitOp(op)
+		}
+	}
+	// close the upd channel
+	c.closeUpdCh()
+	// now we're dead :'(
 	atomic.StoreInt32(&c.dead, 1)
-	// TODO: submit an abort operation here if the last state machine includes this user
-	// 	and the round isn't done or failed
 }
 func (c *Client) killed() bool {
 	z := atomic.LoadInt32(&c.dead)
@@ -638,7 +669,11 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf Client
 	c.lastUpdate = newLastStateMachine()
 	c.cp = cp
 	c.currConf = make([]int, 0)
-	c.updCh = s.GetUpdCh()
+	var i int
+	c.updCh, i = s.GetUpdCh()
+	c.closeUpdCh = func() {
+		s.CloseUpdCh(i)
+	}
 	c.serverId = s.Me
 	c.active = true // TODO set this to false on init after testing.
 	c.leaving = false

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/arvid220u/6.824-project/labgob"
 	"github.com/arvid220u/6.824-project/network"
@@ -36,7 +37,8 @@ type Server struct {
 	applyCh <-chan raft.ApplyMsg
 	// updChs stores all channels on which state machine updates should be sent.
 	// Each update should be sent to each channel.
-	updChs []chan UpdateMsg // slice protected by mu
+	updChs     map[int]chan UpdateMsg // map protected by mu
+	updChIndex int                    // protected by mu
 
 	// resps stores one channel for every pending request, indexed by Raft term and log index
 	resps RespChannels // protected by mu
@@ -59,6 +61,8 @@ func NewServer(me int, rf Raft) *Server {
 	s.sm = NewStateMachine(nil)
 	s.applyCh = rf.GetApplyCh()
 	s.resps = NewRespChannels()
+	s.updChs = make(map[int]chan UpdateMsg)
+	s.updChIndex = 0
 
 	go s.applier()
 
@@ -118,7 +122,15 @@ func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 	ch := s.resps.Create(term, index)
 
 	s.mu.Unlock()
-	resp := <-ch
+	resp := false
+	brk := false
+	for !s.killed() && !brk {
+		select {
+		case resp = <-ch:
+			brk = true
+		case <-time.NewTimer(time.Second).C:
+		}
+	}
 	s.mu.Lock()
 
 	if !resp {
@@ -212,18 +224,27 @@ func (s *Server) dump() {
 // All updates are guaranteed to come, and they are guaranteed to come in order.
 //
 // The client MUST almost always be reading from the channel. It may never block for an extended
-// amount of time not reading on the returned channel.
-func (s *Server) GetUpdCh() <-chan UpdateMsg {
+// amount of time not reading on the returned channel. Before the client stops reading from the channel,
+// it must call CloseUpdCh.
+func (s *Server) GetUpdCh() (<-chan UpdateMsg, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// make it buffered with buffer 1 so that we can send the first state machine right here
 	ch := make(chan UpdateMsg, 1)
-	s.updChs = append(s.updChs, ch)
+	index := s.updChIndex
+	s.updChs[index] = ch
+	s.updChIndex++
 
 	ch <- UpdateMsg{StateMachineValid: true, StateMachine: s.sm.DeepCopy()}
 
-	return ch
+	return ch, index
+}
+func (s *Server) CloseUpdCh(index int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	close(s.updChs[index])
+	delete(s.updChs, index)
 }
 
 //Assumes lock on

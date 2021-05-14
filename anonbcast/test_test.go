@@ -18,7 +18,7 @@ func TestServerMockraftNoFailures(t *testing.T) {
 	rf := mockraft.New(applyCh)
 	s := NewServer(0, rf)
 
-	updCh := s.GetUpdCh()
+	updCh, i := s.GetUpdCh()
 
 	// assert initial state is correct
 	upd := <-updCh
@@ -34,6 +34,9 @@ func TestServerMockraftNoFailures(t *testing.T) {
 	if ri.Phase != PreparePhase {
 		t.Errorf("initial phase is %v", ri.Phase)
 	}
+
+	s.CloseUpdCh(i)
+	s.Kill()
 }
 
 type MessageGenerator struct {

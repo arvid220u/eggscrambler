@@ -58,6 +58,7 @@ func main() {
 	applyCh := make(chan raft.ApplyMsg)
 	rf := mockraft.New(applyCh)
 	s := anonbcast.NewServer(0, rf)
+	defer s.Kill()
 
 	net := labrpc.MakeNetwork()
 	defer net.Cleanup()
@@ -91,12 +92,12 @@ func main() {
 		MessageSize:     100,
 	}
 	c1 := anonbcast.NewClient(s, cg1, cp1, clcf)
+	defer c1.Kill()
 	results := c1.GetResCh()
 	orderedResults := make(chan anonbcast.RoundResult)
 	go resultOrderer(results, orderedResults)
 	c2 := anonbcast.NewClient(s, cg2, cp2, clcf)
-
-	log.Printf("server: %+v, client 1: %+v, client 2: %+v\n", s, c1, c2)
+	defer c2.Kill()
 
 	for i := 0; ; i++ {
 		time.Sleep(time.Millisecond * 100)
@@ -120,4 +121,5 @@ func main() {
 		}
 
 	}
+
 }
