@@ -233,6 +233,8 @@ func TestParticipantsOneNotInInitialConfiguration(t *testing.T) {
 	time.Sleep(5 * time.Second) // generous amount of time for election and configuration change
 
 	// The client out of configuration will miss the first round
+	// TODO: it is possible for this to fail, if the configuration change was fast enough that the outsider
+	//		client actually has time to become a participant in the first round.
 	cfg.checkConfigurationMatchesParticipants(initialConfiguration)
 
 	next := cfg.oneRoundWithExpectedConfiguration(0, initialConfiguration) + 1
