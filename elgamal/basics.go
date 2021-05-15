@@ -1,5 +1,11 @@
 package elgamal
 
+// This is an implementation of a commutative version of the ElGamal encryption scheme, based on
+// this paper: https://doi.org/10.1109/ISIC.2012.6449730
+// It turned out that ElGamal does not suit our purposes, since it requires users to record a table T
+// for each message, which would reveal identities in our case. The implementation is kept here for reference.
+// Usage is demonstrated in encrypt_test.go.
+
 import (
 	"crypto/rand"
 	"io"

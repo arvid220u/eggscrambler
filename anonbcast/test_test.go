@@ -297,7 +297,9 @@ func TestAbortClientKilled(t *testing.T) {
 	clToKill := cfg.getClientById(cfg.orderedClientIds[indexToKill])
 	activeClient := cfg.getClientById(cfg.orderedClientIds[indexToKill+1])
 	activeClient.Start(0)
-	clToKill.Kill()             // TODO this isn't a reliable way to get the round to fail in time
+	// note: killing to send abort only works for reliable networks, because the client never retries sending the abort
+	// for unreliable networks, we would want to wait for a protocol timeout instead.
+	clToKill.Kill()
 	time.Sleep(3 * time.Second) // wait for it to propagate
 	sm := activeClient.GetLastStateMachine()
 	ri, err := sm.GetRoundInfo(0)

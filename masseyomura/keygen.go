@@ -19,7 +19,8 @@ func GenSysKey(random io.Reader, bitsp int) (syskey *SystemKey, err error) {
 		if err != nil {
 			return
 		}
-		isprimep = p.ProbablyPrime(40) // TODO: is 40 safe enough?
+		// probability of false positive is <= (1/4)^40, which is small enough
+		isprimep = p.ProbablyPrime(40)
 	}
 	syskey = &SystemKey{P: p}
 	return
@@ -31,6 +32,10 @@ func VerifySysKey(syskey *SystemKey, bitsp int) error {
 		return fmt.Errorf("syskey has bitlen %d != expected bitsp %d", syskey.P.BitLen(), bitsp)
 	}
 	// verify that it is prime
+	// According to its spec, ProbablyPrime is not safe against adversarial inputs, which is what we have here.
+	// However, https://eprint.iacr.org/2018/749.pdf which points out that primality checking is a security vulnerability in many
+	// crypto implementations, but seems to suggest that the Baillie-PSW test, which ProbablyPrime performs,
+	// is good enough. If ever used in a real system, this prime verification should be investigated further.
 	if !syskey.P.ProbablyPrime(40) {
 		return errors.New("given syskey is not probably prime!")
 	}

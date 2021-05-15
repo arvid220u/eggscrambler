@@ -17,15 +17,19 @@ def print(s):
 
 def run(s: Optional[str] = None, race: bool = True) -> bool:
     success = True
+    env = os.environ.copy()
+    env["DEBUG"] = "true"
     if s is None:
-        p = subprocess.Popen(['go', 'test', '-count=1', '-race' if race else ''],stdout=subprocess.PIPE)
+        p = subprocess.Popen(['go', 'test', '-v', '-count=1', '-race' if race else ''],stdout=subprocess.PIPE, env=env)
     else:
-        p = subprocess.Popen(['go', 'test', '-run', s, '-count=1', '-race' if race else ''],stdout=subprocess.PIPE)
+        p = subprocess.Popen(['go', 'test', '-v', '-run', s, '-count=1', '-race' if race else ''],stdout=subprocess.PIPE, env=env)
     output = ""
     for line in iter(p.stdout.readline, b''):
         out = line.decode('utf-8')
         output += out
         out = out.strip("\n")
+        if "INFO" in out:
+            continue
         if "PASS" in out:
             print(f"[green]{escape(out)}[/green]")
         elif "FAIL" in out:
@@ -34,7 +38,7 @@ def run(s: Optional[str] = None, race: bool = True) -> bool:
         else:
             print(escape(out))
     if not success:
-        fn = f"{s}-fail-{random.randint(1,10000)}"
+        fn = f"{s + '-' if s is not None else ''}fail-{random.randint(1,10000)}"
         print(f"[magenta]saving failed log file to {fn}")
         with open(fn, "w") as f:
             f.write(output)

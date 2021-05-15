@@ -45,8 +45,9 @@ type Client struct {
 	serverId int // never modified concurrently, so don't need lock on mu
 
 	// dead indicates whether the client is alive. Set by Kill()
-	dead int32
-	mu   sync.Mutex
+	dead   int32
+	killMu sync.Mutex // only used inside Kill()
+	mu     sync.Mutex
 
 	// m is an object that provides a message to send on a given round.
 	m Messager
@@ -656,7 +657,6 @@ func (c *Client) submitOps() {
 	for !c.killed() {
 		op := c.pending.get()
 
-		// TODO maybe a switch case to handle other types of errors?
 		if err := c.submitOp(op); err != nil {
 			c.updateLeader()
 		} else {
@@ -763,12 +763,12 @@ func (c *Client) Kill() {
 	}
 	// lock here to make sure that the operations after this point happen exactly once,
 	// even if Kill is called multiple times
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.killMu.Lock()
+	defer c.killMu.Unlock()
 	if c.killed() {
 		return
 	}
-	// close the upd channel
+	// close the upd channel (we only want to do this once)
 	c.closeUpdCh()
 	// now we're dead :'(
 	atomic.StoreInt32(&c.dead, 1)

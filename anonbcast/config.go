@@ -263,7 +263,7 @@ func (cfg *config) makeClient(m Messager, localSrv int, to []int) *Client {
 	}
 
 	cp := network.New(random_handles(ends))
-	clcf := ClientConfig{ // TODO: tune these parameters? should they be passed into makeClient
+	clcf := ClientConfig{
 		MessageTimeout:  TEST_MESSAGE_TIMEOUT,
 		ProtocolTimeout: TEST_PROTOCOL_TIMEOUT,
 		MessageSize:     100,
@@ -552,9 +552,12 @@ func (cfg *config) oneRoundWithExpectedConfiguration(round int, expectedConfigur
 				time.Sleep(time.Millisecond * 5)
 				sm1 = c1.GetLastStateMachine()
 			}
+			// configurations may change, and in case someone added themselves it may so happen that we are here,
+			// yet, c1 is not in this round. so we still need a loop here.
 			err := c1.Start(actualRound)
-			if err != nil {
-				cfg.t.Fatalf("problem occurred in start should never happen: %v", err)
+			for err != nil {
+				time.Sleep(time.Millisecond * 1)
+				err = c1.Start(actualRound)
 			}
 		}
 		r := <-orderedResults

@@ -6,7 +6,6 @@ import (
 )
 
 func bytesMaxSize(bits int) int {
-	// TODO: is this actually correct?
 	maxsize := (bits-1)/8 - 1 // message has strictly fewer bits than p
 	return maxsize
 }
@@ -23,7 +22,7 @@ func PrepareMsg(msg []byte, plen int) (*big.Int, error) {
 	if len(msg) > maxsize {
 		return nil, fmt.Errorf("message size %d too long for %d bit key", len(msg), plen)
 	}
-	return new(big.Int).SetBytes(pad(msg, maxsize+1)), nil // TODO: is maxsize+1 allowed here?
+	return new(big.Int).SetBytes(pad(msg, maxsize+1)), nil
 }
 
 // Encrypt encrypts using privkey.E: result = message ^ privkey.E (mod p)

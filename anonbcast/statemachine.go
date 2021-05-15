@@ -416,9 +416,41 @@ func (sm *StateMachine) CurrentRoundInfo() *RoundInfo {
 // op has round 9, this should return true. It is always safe to return
 // false, but it may improve performance to return true when allowed.
 func (sm *StateMachine) GuaranteedNoEffect(op Op) bool {
-	// TODO: potentially add more optimizations here, looking at the phase of the op
 	if op.Round() < sm.Round {
 		return true
+	}
+	if op.Round() == sm.Round {
+		switch sm.CurrentRoundInfo().Phase {
+		case RevealPhase:
+			if op.Type() == DecryptedOpType {
+				return true
+			}
+			fallthrough
+		case DecryptPhase:
+			if op.Type() == ScrambledOpType {
+				return true
+			}
+			fallthrough
+		case ScramblePhase:
+			if op.Type() == EncryptedOpType {
+				return true
+			}
+			fallthrough
+		case EncryptPhase:
+			if op.Type() == MessageOpType {
+				return true
+			}
+			fallthrough
+		case SubmitPhase:
+			if op.Type() == JoinOpType || op.Type() == StartOpType {
+				return true
+			}
+			fallthrough
+		case PreparePhase:
+			return false // any operation can have effect in the future
+		default:
+			sm.assertf(false, "should never happen; exhaustively all phases should be checked")
+		}
 	}
 	return false
 }
