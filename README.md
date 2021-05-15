@@ -8,7 +8,7 @@ Key packages:
 
 For testing:
 ```
-cd anonbcast && go test
+cd anonbcast && go test -v
 ```
 
 For running the application:
