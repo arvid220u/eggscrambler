@@ -2,30 +2,22 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
+	"github.com/arvid220u/eggscrambler/anonbcast"
 	"github.com/arvid220u/eggscrambler/libraft"
+	"github.com/arvid220u/eggscrambler/network"
 	"log"
 	"os"
 	"strings"
-	"sync"
 	"time"
-
-	"github.com/arvid220u/eggscrambler/anonbcast"
-	"github.com/arvid220u/eggscrambler/labrpc"
-	"github.com/arvid220u/eggscrambler/mockraft"
-	"github.com/arvid220u/eggscrambler/network"
 )
 
-type ConfessionsGenerator struct {
-	id string
-	mu *sync.Mutex
-}
+type confessionsGenerator struct{}
 
-func (cg ConfessionsGenerator) Message(round int) []byte {
-	cg.mu.Lock()
-	defer cg.mu.Unlock()
+func (cg confessionsGenerator) Message(round int) []byte {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("Message to send in round %d, client %s: ", round, cg.id)
+	fmt.Printf("Message to send in round %d: ", round)
 	msg, err := reader.ReadString('\n')
 	if err != nil {
 		log.Fatalf("err: %v", err)
@@ -51,66 +43,72 @@ func resultOrderer(unorderedResults <-chan anonbcast.RoundResult, orderedResults
 	}
 }
 
-// TODO: extract the confessions app into its own package, and create a very simple
-// 	main package that starts the confessions app.
 func main() {
-	fmt.Println("welcome to the fully anonymous MIT confessions!")
-	applyCh := make(chan libraft.ApplyMsg)
-	rf := mockraft.New(applyCh)
-	s := anonbcast.NewServer("0", rf)
+	var join string // TODO: make into list for nicer fault tolerance
+	flag.StringVar(&join, "join", "", "address of server to join")
+	flag.Parse()
+
+	cp := network.NewLibp2p()
+
+	seedConf := make(map[string]bool)
+
+	if join == "" {
+		fmt.Printf("Starting seed server with ID: %v\n", cp.Me())
+		seedConf[cp.Me()] = true
+	} else {
+		fmt.Printf("Joining seed server with ID: %v\n", join)
+		seedConf[join] = true
+	}
+
+	persister := libraft.MakePersister()
+	s, rf := anonbcast.MakeServer(cp, seedConf, persister, -1)
 	defer s.Kill()
-
-	net := labrpc.MakeNetwork()
-	defer net.Cleanup()
-	end1 := net.MakeEnd("client1")
-	end2 := net.MakeEnd("client2")
-	svc := labrpc.MakeService(s)
-	srv := labrpc.MakeServer()
-	srv.AddService(svc)
-	net.AddServer("server", srv)
-	net.Connect("client1", "server")
-	net.Enable("client1", true)
-	net.Connect("client2", "server")
-	net.Enable("client2", true)
-
-	cp1 := network.New([]*labrpc.ClientEnd{end1}, 0)
-	cp2 := network.New([]*labrpc.ClientEnd{end2}, 0)
-
-	var mu sync.Mutex
-	cg1 := ConfessionsGenerator{
-		id: "1",
-		mu: &mu,
+	err := cp.Server.Register(s)
+	if err != nil {
+		panic(err)
 	}
-	cg2 := ConfessionsGenerator{
-		id: "2",
-		mu: &mu,
+	err = cp.Server.Register(rf)
+	if err != nil {
+		panic(err)
 	}
 
+	cg := confessionsGenerator{}
 	clcf := anonbcast.ClientConfig{
 		MessageTimeout:  time.Second * 30,
 		ProtocolTimeout: time.Second * 10,
 		MessageSize:     100,
 	}
-	seedConf := make(map[string]bool)
-	seedConf["0"] = true
-	c1 := anonbcast.NewClient(s, cg1, cp1, seedConf, clcf)
-	defer c1.Kill()
-	results := c1.CreateResCh()
-	defer c1.DestroyResCh(results)
+	c := anonbcast.NewClient(s, cg, cp, seedConf, clcf)
+	defer c.Kill()
+	results := c.CreateResCh()
+	defer c.DestroyResCh(results)
 	orderedResults := make(chan anonbcast.RoundResult)
 	go resultOrderer(results, orderedResults)
-	c2 := anonbcast.NewClient(s, cg2, cp2, seedConf, clcf)
-	defer c2.Kill()
 
 	for i := 0; ; i++ {
-		time.Sleep(time.Millisecond * 100)
-		err := c1.Start(i)
-		for err != nil {
-			time.Sleep(time.Millisecond * 100)
-			err = c1.Start(i)
+		sm := c.GetLastStateMachine()
+		if sm.Round > i {
+			continue
 		}
-		fmt.Printf("Starting round %d!\n", i)
-		r := <-orderedResults
+		fmt.Printf("Waiting for 60 seconds before deciding to start round %v...\n", i)
+		var r anonbcast.RoundResult
+		select {
+		case <-time.NewTimer(time.Second * 60).C:
+			fmt.Printf("Starting round %d!\n", i)
+			err := c.Start(i)
+			if err != nil {
+				sm := c.GetLastStateMachine()
+				if sm.Round > i {
+					continue
+				}
+				i-- // we don't want to advance if the latest state machine is not ahead of us, we just want to retry
+				continue
+			}
+			r = <-orderedResults
+			fmt.Printf("Got round %d result!\n", i)
+		case r = <-orderedResults:
+			fmt.Printf("Got round %d result!\n", i)
+		}
 		if r.Round != i {
 			log.Fatalf("round %d not equal to index %d", r.Round, i)
 		}
@@ -122,7 +120,5 @@ func main() {
 		} else {
 			fmt.Printf("Round %d failed :(\n", r.Round)
 		}
-
 	}
-
 }
