@@ -8,6 +8,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/peer"
 	gorpc "github.com/libp2p/go-libp2p-gorpc"
 	"github.com/multiformats/go-multiaddr"
+	"strings"
 )
 
 const rpcProtocolID = "/p2p/rpc/eggscrambler"
@@ -59,7 +60,7 @@ func NewLibp2p() *Libp2pConnectionProvider {
 	cp := &Libp2pConnectionProvider{}
 	// TODO: listen on 0.0.0.0 so we can allow non-localhost connections too :)
 	//cp.Host = createPeer("/ip4/0.0.0.0/tcp/0")
-	cp.Host = createPeer("/ip4/127.0.0.1/tcp/0")
+	cp.Host = createPeer("/ip4/0.0.0.0/tcp/0")
 	fmt.Printf("Hello World, new libp2p with ID %s\n", cp.Host.ID().Pretty())
 	cp.Server = gorpc.NewServer(cp.Host, rpcProtocolID)
 	cp.Client = gorpc.NewClientWithServer(cp.Host, rpcProtocolID, cp.Server)
@@ -80,10 +81,12 @@ func (cp *Libp2pConnectionProvider) Me() string {
 	if err != nil {
 		panic(err)
 	}
-	// TODO: support multiple addresses. this means we need to change how IDs are handled, as separate from addresses
-	// 	requires some changes to raft etc probably
-	if len(addrs) != 1 {
-		panic("can only support 1 address for now")
+	// choose the non-127.0.0.1 address
+	var chosenAddr string
+	for _, addr := range addrs {
+		if !strings.Contains(addr.String(), "127.0.0.1") {
+			chosenAddr = addr.String()
+		}
 	}
-	return addrs[0].String()
+	return chosenAddr
 }
