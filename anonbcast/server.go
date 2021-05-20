@@ -71,11 +71,11 @@ func NewServer(me string, rf libraft.Raft) *Server {
 }
 
 // Creates and starts new anonbcast server using a real raft instance
-func MakeServer(cp network.ConnectionProvider, initialCfg map[string]bool, persister *libraft.Persister, maxraftstate int) *Server {
+func MakeServer(cp network.ConnectionProvider, initialCfg map[string]bool, persister *libraft.Persister, maxraftstate int) (*Server, libraft.Raft) {
 	applyCh := make(chan libraft.ApplyMsg, 1)
 	// TODO: is it ok if initialCfg only contains part of some configuration (I think so???)
 	rf := makeRaft(cp, initialCfg, persister, applyCh, false)
-	return NewServer(cp.Me(), rf)
+	return NewServer(cp.Me(), rf), rf
 }
 
 type Err string

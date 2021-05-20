@@ -396,7 +396,7 @@ func (cfg *config) StartServer(i int) {
 	cfg.mu.Unlock()
 
 	cp := network.New(ends, i)
-	cfg.servers[i] = MakeServer(cp, cfg.initialConfiguration, cfg.saved[i], cfg.maxraftstate)
+	cfg.servers[i], _ = MakeServer(cp, cfg.initialConfiguration, cfg.saved[i], cfg.maxraftstate)
 
 	anonsvc := labrpc.MakeService(cfg.servers[i])
 	rfsvc := labrpc.MakeService(cfg.servers[i].rf)
