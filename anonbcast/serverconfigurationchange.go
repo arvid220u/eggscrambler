@@ -1,7 +1,7 @@
 package anonbcast
 
 import (
-	"github.com/arvid220u/6.824-project/libraft"
+	"github.com/arvid220u/eggscrambler/libraft"
 )
 
 type AddRemoveArgs struct {

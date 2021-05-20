@@ -1,7 +1,7 @@
 package libraft
 
 import (
-	"github.com/arvid220u/6.824-project/network"
+	"github.com/arvid220u/eggscrambler/network"
 )
 
 type ApplyMsg struct {

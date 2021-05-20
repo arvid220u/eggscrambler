@@ -1,0 +1,3 @@
+[submodule "raft"]
+	path = raft
+	url = ../eggscrambler-raft

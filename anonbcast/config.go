@@ -1,7 +1,7 @@
 package anonbcast
 
 import (
-	"github.com/arvid220u/6.824-project/libraft"
+	"github.com/arvid220u/eggscrambler/libraft"
 	"os"
 	"testing"
 
@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/arvid220u/6.824-project/labrpc"
-	"github.com/arvid220u/6.824-project/network"
+	"github.com/arvid220u/eggscrambler/labrpc"
+	"github.com/arvid220u/eggscrambler/network"
 	"github.com/google/uuid"
 )
 

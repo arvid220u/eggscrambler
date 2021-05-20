@@ -2,13 +2,13 @@ package anonbcast
 
 import (
 	"fmt"
-	"github.com/arvid220u/6.824-project/libraft"
+	"github.com/arvid220u/eggscrambler/libraft"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/arvid220u/6.824-project/labgob"
-	"github.com/arvid220u/6.824-project/network"
+	"github.com/arvid220u/eggscrambler/labgob"
+	"github.com/arvid220u/eggscrambler/network"
 	"github.com/davecgh/go-spew/spew"
 )
 

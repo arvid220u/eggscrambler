@@ -2,15 +2,15 @@ package anonbcast
 
 import (
 	"fmt"
-	"github.com/arvid220u/6.824-project/libraft"
+	"github.com/arvid220u/eggscrambler/libraft"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/arvid220u/6.824-project/labrpc"
-	"github.com/arvid220u/6.824-project/network"
+	"github.com/arvid220u/eggscrambler/labrpc"
+	"github.com/arvid220u/eggscrambler/network"
 
-	"github.com/arvid220u/6.824-project/mockraft"
+	"github.com/arvid220u/eggscrambler/mockraft"
 )
 
 func TestServerMockraftNoFailures(t *testing.T) {

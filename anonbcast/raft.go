@@ -1,9 +1,9 @@
 package anonbcast
 
 import (
-	"github.com/arvid220u/6.824-project/libraft"
-	"github.com/arvid220u/6.824-project/network"
-	"github.com/arvid220u/6.824-project/raft"
+	"fmt"
+	"github.com/arvid220u/eggscrambler/libraft"
+	"github.com/arvid220u/eggscrambler/network"
 	"log"
 	"os"
 	"plugin"
@@ -18,7 +18,9 @@ func makeRaft(cp network.ConnectionProvider, me int, initialConfig map[int]bool,
 
 	if compiledRaft == "" {
 		// use the actual raft!
-		return raft.Make(cp, me, initialConfig, persister, applyCh, sendAllLogAsInt)
+		panic(fmt.Sprintf("need to specify raft.so location using %v environment variable! or if you want to run the non-libified version, uncomment the line below this line in anonbcast/raft.go", compiledRaftEnvKey))
+		//return raft.Make(cp, me, initialConfig, persister, applyCh, sendAllLogAsInt)
+		return nil
 	} else {
 		// use the libified raft!
 		p, err := plugin.Open(compiledRaft)
