@@ -16,7 +16,7 @@ type ApplyMsg struct {
 	IsLeader        bool
 
 	ConfigValid   bool // Indicates server configuration has changed
-	Configuration map[int]bool
+	Configuration map[string]bool
 }
 
 // Raft can manage a shared log.
@@ -57,15 +57,15 @@ type Raft interface {
 
 	// GetProvisionalConfiguration returns whether or not the server thinks it's the leader
 	// and a set of servers with provisional status
-	GetProvisionalConfiguration() (bool, map[int]bool)
+	GetProvisionalConfiguration() (bool, map[string]bool)
 
 	// GetCurrentConfiguration returns whether or not the server thinks it's the leader
 	// and a set of servers with voting status
-	GetCurrentConfiguration() (bool, map[int]bool)
+	GetCurrentConfiguration() (bool, map[string]bool)
 
-	AddProvisional(peer int) (int, AddProvisionalError)
+	AddProvisional(peer string) (int, AddProvisionalError)
 
-	RemoveServer(peer int) (<-chan bool, AddRemoveServerError)
+	RemoveServer(peer string) (<-chan bool, AddRemoveServerError)
 
-	AddServer(peer int) (<-chan bool, AddRemoveServerError)
+	AddServer(peer string) (<-chan bool, AddRemoveServerError)
 }

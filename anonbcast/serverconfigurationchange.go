@@ -5,7 +5,7 @@ import (
 )
 
 type AddRemoveArgs struct {
-	Server int
+	Server string
 	IsAdd  bool
 }
 
@@ -15,7 +15,7 @@ type AddRemoveReply struct {
 }
 
 type AddProvisionalArgs struct {
-	Server int
+	Server string
 }
 
 type AddProvisionalReply struct {
@@ -23,7 +23,7 @@ type AddProvisionalReply struct {
 }
 
 type InConfigurationArgs struct {
-	Server           int
+	Server           string
 	IsProvisionalReq bool
 }
 
@@ -36,7 +36,7 @@ type InConfigurationReply struct {
 // given server is in this raft's configuration.
 func (s *Server) InConfiguration(args *InConfigurationArgs, reply *InConfigurationReply) {
 	var isLeader bool
-	var conf map[int]bool
+	var conf map[string]bool
 	if args.IsProvisionalReq {
 		isLeader, conf = s.rf.GetProvisionalConfiguration()
 	} else {

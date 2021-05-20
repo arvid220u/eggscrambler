@@ -45,29 +45,29 @@ func (m *Mockraft) GetApplyCh() <-chan libraft.ApplyMsg {
 }
 
 // Implemented as no-op as it shouldn't be called on mockraft
-func (m *Mockraft) GetProvisionalConfiguration() (bool, map[int]bool) {
-	return true, make(map[int]bool)
+func (m *Mockraft) GetProvisionalConfiguration() (bool, map[string]bool) {
+	return true, make(map[string]bool)
 }
 
 // Implemented as no-op as it shouldn't be called on mockraft
-func (m *Mockraft) GetCurrentConfiguration() (bool, map[int]bool) {
-	mp := make(map[int]bool)
-	mp[0] = true
+func (m *Mockraft) GetCurrentConfiguration() (bool, map[string]bool) {
+	mp := make(map[string]bool)
+	mp["0"] = true
 	return true, mp
 }
 
 // Implemented as no-op as it shouldn't be called on mockraft
-func (m *Mockraft) AddProvisional(peer int) (int, libraft.AddProvisionalError) {
+func (m *Mockraft) AddProvisional(peer string) (int, libraft.AddProvisionalError) {
 	return 0, libraft.AP_SUCCESS
 }
 
 // Implemented as no-op as it shouldn't be called on mockraft
-func (m *Mockraft) RemoveServer(peer int) (<-chan bool, libraft.AddRemoveServerError) {
+func (m *Mockraft) RemoveServer(peer string) (<-chan bool, libraft.AddRemoveServerError) {
 	return nil, libraft.AR_OK
 }
 
 // Implemented as no-op as it shouldn't be called on mockraft
-func (m *Mockraft) AddServer(peer int) (<-chan bool, libraft.AddRemoveServerError) {
+func (m *Mockraft) AddServer(peer string) (<-chan bool, libraft.AddRemoveServerError) {
 	return nil, libraft.AR_OK
 }
 

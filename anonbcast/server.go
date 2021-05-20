@@ -14,7 +14,7 @@ import (
 
 type UpdateMsg struct {
 	ConfigurationValid bool
-	Configuration      map[int]bool
+	Configuration      map[string]bool
 
 	StateMachineValid bool
 	StateMachine      StateMachine
@@ -25,7 +25,7 @@ type UpdateMsg struct {
 // can be called by a Client on a different machine, and exposes a channel
 // that can be consumed by a local Client for reading the latest state.
 type Server struct {
-	Me int
+	Me string
 	rf libraft.Raft
 
 	dead int32 // set by Kill(), not protected by mu
@@ -44,7 +44,7 @@ type Server struct {
 	resps RespChannels // protected by mu
 }
 
-func NewServer(me int, rf libraft.Raft) *Server {
+func NewServer(me string, rf libraft.Raft) *Server {
 	labgob.Register(masseyOmuraCrypto{})
 	labgob.Register(JoinOp{})
 	labgob.Register(StartOp{})
@@ -70,10 +70,11 @@ func NewServer(me int, rf libraft.Raft) *Server {
 }
 
 // Creates and starts new anonbcast server using a real raft instance
-func MakeServer(cp network.ConnectionProvider, me int, initialCfg map[int]bool, persister *libraft.Persister, maxraftstate int) *Server {
+func MakeServer(cp network.ConnectionProvider, initialCfg map[string]bool, persister *libraft.Persister, maxraftstate int) *Server {
 	applyCh := make(chan libraft.ApplyMsg, 1)
-	rf := makeRaft(cp, me, initialCfg, persister, applyCh, false)
-	return NewServer(me, rf)
+	// TODO: is it ok if initialCfg only contains part of some configuration (I think so???)
+	rf := makeRaft(cp, initialCfg, persister, applyCh, false)
+	return NewServer(cp.Me(), rf)
 }
 
 type Err string
@@ -197,7 +198,7 @@ func (s *Server) killed() bool {
 }
 
 func (s *Server) logHeader() string {
-	return fmt.Sprintf("server %d", s.Me)
+	return fmt.Sprintf("server %v", s.Me)
 }
 
 func (s *Server) logf(topic logTopic, format string, a ...interface{}) {
@@ -256,7 +257,7 @@ func (s *Server) sendStateMachineUpdate() {
 }
 
 // Assumes lock on s.mu is HELD.
-func (s *Server) sendConfigurationUpdate(conf map[int]bool) {
+func (s *Server) sendConfigurationUpdate(conf map[string]bool) {
 	for _, ch := range s.updChs {
 		ch <- UpdateMsg{ConfigurationValid: true, Configuration: conf}
 	}

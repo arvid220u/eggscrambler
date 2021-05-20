@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,7 +43,7 @@ type Client struct {
 
 	// Id of the underlying state machine server.
 	// Used for the client to make configuration changes.
-	serverId int // never modified concurrently, so don't need lock on mu
+	serverId string // never modified concurrently, so don't need lock on mu
 
 	// dead indicates whether the client is alive. Set by Kill()
 	dead   int32
@@ -64,7 +65,7 @@ type Client struct {
 	//Indicates whether client is actively trying to leave configuration
 	leaving            bool
 	cp                 network.ConnectionProvider
-	currConf           []int
+	currConf           []string
 	lastKnownLeaderInd int
 
 	resCh   chan RoundResult
@@ -125,7 +126,7 @@ func (c *Client) submitOp(op Op) error {
 	c.mu.Lock()
 	potentialLeader := c.currConf[c.lastKnownLeaderInd]
 	c.mu.Unlock()
-	ok := c.cp.Call(potentialLeader, "Server.SubmitOp", &op, &reply)
+	ok := c.cp.Call(potentialLeader, "Server", "SubmitOp", &op, &reply)
 	if !ok {
 		return errors.New("no response")
 	}
@@ -783,7 +784,7 @@ func (c *Client) logf(topic logTopic, format string, a ...interface{}) {
 }
 
 func (c *Client) logHeader() string {
-	return fmt.Sprintf("client %s (on server %d)", c.Id.String(), c.serverId)
+	return fmt.Sprintf("client %s (on server %v)", c.Id.String(), c.serverId)
 }
 
 func (c *Client) assertf(condition bool, format string, a ...interface{}) {
@@ -799,8 +800,8 @@ func (c *Client) dump() {
 	}
 }
 
-func mapToSlice(mp map[int]bool) []int {
-	sl := make([]int, 0)
+func mapToSlice(mp map[string]bool) []string {
+	sl := make([]string, 0)
 	for k := range mp {
 		sl = append(sl, k)
 	}
@@ -890,7 +891,7 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf Client
 	c.pending = newEliminationQueue()
 	c.lastUpdate = newLastStateMachine()
 	c.cp = cp
-	c.currConf = make([]int, 0)
+	c.currConf = make([]string, 0)
 	var i int
 	c.updCh, i = s.GetUpdCh()
 	c.closeUpdCh = func() {
@@ -902,9 +903,10 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf Client
 	c.Config = conf
 
 	// Assume the configuration has all possible servers, until we get notified otherwise
+	// TODO: take in currConf as an argument? should it be the same as the server's conf?
 	peers := cp.NumPeers()
 	for i := 0; i < peers; i++ {
-		c.currConf = append(c.currConf, i)
+		c.currConf = append(c.currConf, strconv.Itoa(i))
 	}
 
 	go c.readUpdates()
