@@ -1,9 +1,9 @@
 package anonbcast
 
 import (
-	"github.com/arvid220u/6.824-project/libraft"
-	"github.com/arvid220u/6.824-project/network"
-	"github.com/arvid220u/6.824-project/raft"
+	"github.com/arvid220u/eggscrambler/libraft"
+	"github.com/arvid220u/eggscrambler/network"
+	"github.com/arvid220u/eggscrambler/raft"
 	"log"
 	"os"
 	"plugin"

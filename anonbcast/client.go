@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/arvid220u/6.824-project/network"
+	"github.com/arvid220u/eggscrambler/network"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/uuid"
 )

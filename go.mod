@@ -1,4 +1,4 @@
-module github.com/arvid220u/6.824-project
+module github.com/arvid220u/eggscrambler
 
 go 1.15
 

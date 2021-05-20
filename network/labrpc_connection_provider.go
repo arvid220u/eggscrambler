@@ -1,6 +1,6 @@
 package network
 
-import "github.com/arvid220u/6.824-project/labrpc"
+import "github.com/arvid220u/eggscrambler/labrpc"
 
 // Implements the ConnectionProvider interface using the laprpc library
 type LabrpcConnectionProvider struct {

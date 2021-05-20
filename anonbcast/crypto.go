@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
-	"github.com/arvid220u/6.824-project/masseyomura"
+	"github.com/arvid220u/eggscrambler/masseyomura"
 	"math/big"
 )
 

@@ -3,17 +3,17 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"github.com/arvid220u/6.824-project/libraft"
+	"github.com/arvid220u/eggscrambler/libraft"
 	"log"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/arvid220u/6.824-project/anonbcast"
-	"github.com/arvid220u/6.824-project/labrpc"
-	"github.com/arvid220u/6.824-project/mockraft"
-	"github.com/arvid220u/6.824-project/network"
+	"github.com/arvid220u/eggscrambler/anonbcast"
+	"github.com/arvid220u/eggscrambler/labrpc"
+	"github.com/arvid220u/eggscrambler/mockraft"
+	"github.com/arvid220u/eggscrambler/network"
 )
 
 type ConfessionsGenerator struct {
