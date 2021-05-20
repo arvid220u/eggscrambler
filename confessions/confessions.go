@@ -53,7 +53,8 @@ func main() {
 	seedConf := make(map[string]bool)
 
 	if join == "" {
-		fmt.Printf("Starting seed server with ID: %v\n", cp.Me())
+		fmt.Printf("Starting seed server with ID: %v\n\n", cp.Me())
+		fmt.Printf("Tell everyone else to run:\ngo run confessions.go -join %v\n\n", cp.Me())
 		seedConf[cp.Me()] = true
 	} else {
 		fmt.Printf("Joining seed server with ID: %v\n", join)
