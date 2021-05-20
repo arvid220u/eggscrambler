@@ -7,6 +7,8 @@ import (
 	"github.com/arvid220u/eggscrambler/anonbcast"
 	"github.com/arvid220u/eggscrambler/libraft"
 	"github.com/arvid220u/eggscrambler/network"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/multiformats/go-multiaddr"
 	"log"
 	"os"
 	"strings"
@@ -57,6 +59,14 @@ func main() {
 		fmt.Printf("Tell everyone else to run:\ngo run confessions.go -join %v\n\n", cp.Me())
 		seedConf[cp.Me()] = true
 	} else {
+		ma, err := multiaddr.NewMultiaddr(join)
+		if err != nil {
+			panic(err)
+		}
+		_, err = peer.AddrInfoFromP2pAddr(ma)
+		if err != nil {
+			panic(err)
+		}
 		fmt.Printf("Joining seed server with ID: %v\n", join)
 		seedConf[join] = true
 	}
