@@ -647,8 +647,20 @@ func (c *Client) readUpdates() {
 			c.assertf(len(c.currConf) > 0, "Expected configuration with at least 1 server, but none found: %v", updMsg.Configuration)
 			c.lastKnownLeaderInd = 0 // reset this to avoid OOB errors
 			c.mu.Unlock()
-		}
 
+			sm := c.lastUpdate.get()
+			round := sm.Round
+			ri := sm.CurrentRoundInfo()
+			me := -1
+			for i, p := range ri.Participants {
+				if p == c.Id {
+					me = i
+				}
+			}
+			if c.getActiveUnlocked() && !c.getLeavingUnlocked() {
+				go c.prepare(round, ri, me)
+			}
+		}
 	}
 }
 
