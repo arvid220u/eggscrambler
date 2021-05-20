@@ -57,7 +57,7 @@ func main() {
 	fmt.Println("welcome to the fully anonymous MIT confessions!")
 	applyCh := make(chan libraft.ApplyMsg)
 	rf := mockraft.New(applyCh)
-	s := anonbcast.NewServer(0, rf)
+	s := anonbcast.NewServer("0", rf)
 	defer s.Kill()
 
 	net := labrpc.MakeNetwork()
@@ -73,8 +73,8 @@ func main() {
 	net.Connect("client2", "server")
 	net.Enable("client2", true)
 
-	cp1 := network.New([]*labrpc.ClientEnd{end1})
-	cp2 := network.New([]*labrpc.ClientEnd{end2})
+	cp1 := network.New([]*labrpc.ClientEnd{end1}, 0)
+	cp2 := network.New([]*labrpc.ClientEnd{end2}, 0)
 
 	var mu sync.Mutex
 	cg1 := ConfessionsGenerator{
