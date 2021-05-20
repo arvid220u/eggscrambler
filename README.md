@@ -2,21 +2,33 @@
 
 See `report.pdf` for a detailed summary of the system.
 
+## Installation
+
+Run:
+```
+git clone git@github.com/arvid220u/eggscrambler
+```
+(if you have access to [eggscrambler-raft](https://github.com/arvid220u/eggscrambler-raft), run instead `git clone --recursive git@github.com/arvid220u/eggscrambler`)
+
+For testing:
+```
+cd anonbcast && RAFT=../raft.so go test -v
+```
+(the `RAFT` environment variable may be removed if you have access to `eggscrambler-raft`)
+
+For running the application:
+```
+cd confessions && RAFT=../raft.so go run confessions.go
+```
+
+## Overview
+
 Key packages:
 - `anonbcast`: providing the `anonbcast.Client` and `anonbcast.Server` that together implement the interface for executing the anonymous broadcasting protocol.
 - `masseyomura`: an implementation of the Massey-Omura commutative encryption scheme.
 - `raft`: an implementation of Raft, including configuration changes.
 - `confessions`: an example application using `anonbcast`.
 
-For testing:
-```
-cd anonbcast && go test -v
-```
-
-For running the application:
-```
-cd confessions && go run confessions.go
-```
 
 ## Raft
 

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 
+"""
+log.py prettifies a log, making it infinitely easier to debug.
+Inspired by this blogpost: https://blog.josejg.com/debugging-pretty/
+"""
+
 from typing import Optional
 import typer
 from rich import print

@@ -1,5 +1,7 @@
 package libraft
 
+// source: git://g.csail.mit.edu/6.824-golabs-2021/src/raft/persister.go
+
 import "sync"
 
 // Persister provides support for Raft and an application using Raft to save persistent state.

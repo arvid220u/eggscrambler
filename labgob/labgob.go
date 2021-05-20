@@ -1,5 +1,7 @@
 package labgob
 
+// source: git://g.csail.mit.edu/6.824-golabs-2021/src/labgob
+
 //
 // trying to send non-capitalized fields over RPC produces a range of
 // misbehavior, including both mysterious incorrect computation and
