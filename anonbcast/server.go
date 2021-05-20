@@ -1,6 +1,7 @@
 package anonbcast
 
 import (
+	"context"
 	"fmt"
 	"github.com/arvid220u/eggscrambler/libraft"
 	"sync"
@@ -14,7 +15,7 @@ import (
 
 type UpdateMsg struct {
 	ConfigurationValid bool
-	Configuration      map[int]bool
+	Configuration      map[string]bool
 
 	StateMachineValid bool
 	StateMachine      StateMachine
@@ -25,7 +26,7 @@ type UpdateMsg struct {
 // can be called by a Client on a different machine, and exposes a channel
 // that can be consumed by a local Client for reading the latest state.
 type Server struct {
-	Me int
+	Me string
 	rf libraft.Raft
 
 	dead int32 // set by Kill(), not protected by mu
@@ -44,7 +45,7 @@ type Server struct {
 	resps RespChannels // protected by mu
 }
 
-func NewServer(me int, rf libraft.Raft) *Server {
+func NewServer(me string, rf libraft.Raft) *Server {
 	labgob.Register(masseyOmuraCrypto{})
 	labgob.Register(JoinOp{})
 	labgob.Register(StartOp{})
@@ -70,10 +71,11 @@ func NewServer(me int, rf libraft.Raft) *Server {
 }
 
 // Creates and starts new anonbcast server using a real raft instance
-func MakeServer(cp network.ConnectionProvider, me int, initialCfg map[int]bool, persister *libraft.Persister, maxraftstate int) *Server {
+func MakeServer(cp network.ConnectionProvider, initialCfg map[string]bool, persister *libraft.Persister, maxraftstate int) (*Server, libraft.Raft) {
 	applyCh := make(chan libraft.ApplyMsg, 1)
-	rf := makeRaft(cp, me, initialCfg, persister, applyCh, false)
-	return NewServer(me, rf)
+	// TODO: is it ok if initialCfg only contains part of some configuration (I think so???)
+	rf := makeRaft(cp, initialCfg, persister, applyCh, false)
+	return NewServer(cp.Me(), rf), rf
 }
 
 type Err string
@@ -99,7 +101,7 @@ func (s *Server) IsLeader(args interface{}, reply *OpRpcReply) {
 // Returns OK if this operation shouldn't be retried (because it has been committed or
 // because it is a no-op), and ErrWrongLeader if the operation should be submitted
 // to another server that might be the leader.
-func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
+func (s *Server) SubmitOp(ctx context.Context, args *Op, reply *OpRpcReply) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.logf(dInfo, "SubmitOp called with args: %v", *args)
@@ -107,7 +109,7 @@ func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 	if s.sm.GuaranteedNoEffect(*args) {
 		// even if this server is not the leader, there is no need to retry
 		reply.Err = OK
-		return
+		return nil
 	}
 
 	index, term, ok := s.rf.Start(*args)
@@ -116,7 +118,7 @@ func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 
 	if !ok {
 		reply.Err = ErrWrongLeader
-		return
+		return nil
 	}
 
 	ch := s.resps.Create(term, index)
@@ -135,10 +137,11 @@ func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 
 	if !resp {
 		reply.Err = ErrWrongLeader
-		return
+		return nil
 	}
 
 	reply.Err = OK
+	return nil
 }
 
 func (s *Server) applier() {
@@ -197,7 +200,7 @@ func (s *Server) killed() bool {
 }
 
 func (s *Server) logHeader() string {
-	return fmt.Sprintf("server %d", s.Me)
+	return fmt.Sprintf("server %v", s.Me)
 }
 
 func (s *Server) logf(topic logTopic, format string, a ...interface{}) {
@@ -256,7 +259,7 @@ func (s *Server) sendStateMachineUpdate() {
 }
 
 // Assumes lock on s.mu is HELD.
-func (s *Server) sendConfigurationUpdate(conf map[int]bool) {
+func (s *Server) sendConfigurationUpdate(conf map[string]bool) {
 	for _, ch := range s.updChs {
 		ch <- UpdateMsg{ConfigurationValid: true, Configuration: conf}
 	}

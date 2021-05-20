@@ -42,7 +42,7 @@ type Client struct {
 
 	// Id of the underlying state machine server.
 	// Used for the client to make configuration changes.
-	serverId int // never modified concurrently, so don't need lock on mu
+	serverId string // never modified concurrently, so don't need lock on mu
 
 	// dead indicates whether the client is alive. Set by Kill()
 	dead   int32
@@ -64,7 +64,7 @@ type Client struct {
 	//Indicates whether client is actively trying to leave configuration
 	leaving            bool
 	cp                 network.ConnectionProvider
-	currConf           []int
+	currConf           []string
 	lastKnownLeaderInd int
 
 	resCh   chan RoundResult
@@ -125,7 +125,7 @@ func (c *Client) submitOp(op Op) error {
 	c.mu.Lock()
 	potentialLeader := c.currConf[c.lastKnownLeaderInd]
 	c.mu.Unlock()
-	ok := c.cp.Call(potentialLeader, "Server.SubmitOp", &op, &reply)
+	ok := c.cp.Call(potentialLeader, "Server", "SubmitOp", &op, &reply)
 	if !ok {
 		return errors.New("no response")
 	}
@@ -647,8 +647,20 @@ func (c *Client) readUpdates() {
 			c.assertf(len(c.currConf) > 0, "Expected configuration with at least 1 server, but none found: %v", updMsg.Configuration)
 			c.lastKnownLeaderInd = 0 // reset this to avoid OOB errors
 			c.mu.Unlock()
-		}
 
+			sm := c.lastUpdate.get()
+			round := sm.Round
+			ri := sm.CurrentRoundInfo()
+			me := -1
+			for i, p := range ri.Participants {
+				if p == c.Id {
+					me = i
+				}
+			}
+			if c.getActiveUnlocked() && !c.getLeavingUnlocked() {
+				go c.prepare(round, ri, me)
+			}
+		}
 	}
 }
 
@@ -761,6 +773,8 @@ func (c *Client) Kill() {
 			_ = c.submitOp(op)
 		}
 	}
+	// become inactive!
+	c.BecomeInactive()
 	// lock here to make sure that the operations after this point happen exactly once,
 	// even if Kill is called multiple times
 	c.killMu.Lock()
@@ -783,7 +797,7 @@ func (c *Client) logf(topic logTopic, format string, a ...interface{}) {
 }
 
 func (c *Client) logHeader() string {
-	return fmt.Sprintf("client %s (on server %d)", c.Id.String(), c.serverId)
+	return fmt.Sprintf("client %s (on server %v)", c.Id.String(), c.serverId)
 }
 
 func (c *Client) assertf(condition bool, format string, a ...interface{}) {
@@ -799,8 +813,8 @@ func (c *Client) dump() {
 	}
 }
 
-func mapToSlice(mp map[int]bool) []int {
-	sl := make([]int, 0)
+func mapToSlice(mp map[string]bool) []string {
+	sl := make([]string, 0)
 	for k := range mp {
 		sl = append(sl, k)
 	}
@@ -883,14 +897,14 @@ func (c *Client) Start(round int) error {
 	return nil
 }
 
-func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf ClientConfig) *Client {
+// seedConfg is a set
+func NewClient(s *Server, m Messager, cp network.ConnectionProvider, seedConf map[string]bool, conf ClientConfig) *Client {
 	c := new(Client)
 	c.Id = uuid.New()
 	c.m = m
 	c.pending = newEliminationQueue()
 	c.lastUpdate = newLastStateMachine()
 	c.cp = cp
-	c.currConf = make([]int, 0)
 	var i int
 	c.updCh, i = s.GetUpdCh()
 	c.closeUpdCh = func() {
@@ -902,9 +916,14 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf Client
 	c.Config = conf
 
 	// Assume the configuration has all possible servers, until we get notified otherwise
-	peers := cp.NumPeers()
-	for i := 0; i < peers; i++ {
-		c.currConf = append(c.currConf, i)
+	// TODO: take in currConf as an argument? should it be the same as the server's conf?
+	//peers := cp.NumPeers()
+	//for i := 0; i < peers; i++ {
+	//	c.currConf = append(c.currConf, strconv.Itoa(i))
+	//}
+	c.assertf(len(seedConf) > 0, "must seed with some users to start! either with oneself or other users")
+	for srv := range seedConf {
+		c.currConf = append(c.currConf, srv)
 	}
 
 	go c.readUpdates()

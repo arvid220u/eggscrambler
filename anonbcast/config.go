@@ -3,6 +3,7 @@ package anonbcast
 import (
 	"github.com/arvid220u/eggscrambler/libraft"
 	"os"
+	"strconv"
 	"testing"
 
 	// import "log"
@@ -70,7 +71,7 @@ type config struct {
 	rpcs0 int       // rpcTotal() at start of test
 	ops   int32     // number of clerk get/put/append method calls
 
-	initialConfiguration map[int]bool
+	initialConfiguration map[string]bool
 
 	orderedClientIds []uuid.UUID //client ids, where index corresponds to client's server
 	orderedMessagers []Messager  // messager, where index corresponds to messager's client's server
@@ -262,13 +263,18 @@ func (cfg *config) makeClient(m Messager, localSrv int, to []int) *Client {
 		cfg.net.Connect(endnames[j], j)
 	}
 
-	cp := network.New(random_handles(ends))
+	// TODO: is it ok to create a new cp for the client even if we already have one for the server??
+	cp := network.New(random_handles(ends), localSrv)
 	clcf := ClientConfig{
 		MessageTimeout:  TEST_MESSAGE_TIMEOUT,
 		ProtocolTimeout: TEST_PROTOCOL_TIMEOUT,
 		MessageSize:     100,
 	}
-	cl := NewClient(cfg.servers[localSrv], m, cp, clcf)
+	seedConf := make(map[string]bool)
+	for j := 0; j < cfg.n; j++ {
+		seedConf[strconv.Itoa(j)] = true
+	}
+	cl := NewClient(cfg.servers[localSrv], m, cp, seedConf, clcf)
 	cfg.clients[cl] = endnames
 	cfg.ConnectClientUnlocked(cl, to)
 	return cl
@@ -389,8 +395,8 @@ func (cfg *config) StartServer(i int) {
 	}
 	cfg.mu.Unlock()
 
-	cp := network.New(ends)
-	cfg.servers[i] = MakeServer(cp, i, cfg.initialConfiguration, cfg.saved[i], cfg.maxraftstate)
+	cp := network.New(ends, i)
+	cfg.servers[i], _ = MakeServer(cp, cfg.initialConfiguration, cfg.saved[i], cfg.maxraftstate)
 
 	anonsvc := labrpc.MakeService(cfg.servers[i])
 	rfsvc := labrpc.MakeService(cfg.servers[i].rf)
@@ -446,7 +452,7 @@ func (cfg *config) make_partition() ([]int, []int) {
 
 var ncpu_once sync.Once
 
-func make_config_with_initial_config(t *testing.T, n int, unreliable bool, maxraftstate int, initialConfiguration map[int]bool) *config {
+func make_config_with_initial_config(t *testing.T, n int, unreliable bool, maxraftstate int, initialConfiguration map[string]bool) *config {
 	ncpu_once.Do(func() {
 		if runtime.NumCPU() < 2 {
 			fmt.Printf("warning: only one CPU, which may conceal locking bugs\n")
@@ -481,9 +487,10 @@ func make_config_with_initial_config(t *testing.T, n int, unreliable bool, maxra
 }
 
 func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config {
-	initialConfiguration := make(map[int]bool)
+	initialConfiguration := make(map[string]bool)
 	for i := 0; i < n; i++ {
-		initialConfiguration[i] = true
+		iS := strconv.Itoa(i)
+		initialConfiguration[iS] = true
 	}
 
 	return make_config_with_initial_config(t, n, unreliable, maxraftstate, initialConfiguration)
@@ -524,7 +531,7 @@ func (cfg *config) end() {
 	}
 }
 
-func (cfg *config) oneRoundWithExpectedConfiguration(round int, expectedConfiguration map[int]bool) int {
+func (cfg *config) oneRoundWithExpectedConfiguration(round int, expectedConfiguration map[string]bool) int {
 	fmt.Printf("Starting round %d\n", round)
 	c1Id, c1, mg1 := cfg.getActiveClient(expectedConfiguration)
 
@@ -607,9 +614,10 @@ func (cfg *config) oneRoundWithExpectedConfiguration(round int, expectedConfigur
 // Only use this in a configuration with automatic, deterministic Messagers
 // Assumes all servers are in configuration
 func (cfg *config) oneRound(round int) int {
-	expectedConfiguration := make(map[int]bool)
+	expectedConfiguration := make(map[string]bool)
 	for i := 0; i < cfg.n; i++ {
-		expectedConfiguration[i] = true
+		iS := strconv.Itoa(i)
+		expectedConfiguration[iS] = true
 	}
 
 	return cfg.oneRoundWithExpectedConfiguration(round, expectedConfiguration)
@@ -649,7 +657,7 @@ func equalContents(s1 []string, s2 []string) bool {
 // Checks that the clients participating in a round have raft servers that are in the configuration
 // Should be called when participants are stable - will be unreliable if called during an active round
 // Or soon after a client attempted to add/remove itself from the configuration
-func (cfg *config) checkConfigurationMatchesParticipants(expectedConfiguration map[int]bool) {
+func (cfg *config) checkConfigurationMatchesParticipants(expectedConfiguration map[string]bool) {
 	activeClientIds := cfg.getActiveClientIds(expectedConfiguration)
 	_, activeClient, _ := cfg.getActiveClient(expectedConfiguration)
 	sm := activeClient.GetLastStateMachine() // XXX I don't think I should DeepCopy here but maybe I should?
@@ -665,21 +673,29 @@ func (cfg *config) checkConfigurationMatchesParticipants(expectedConfiguration m
 
 }
 
-func (cfg *config) getActiveClientIds(expectedConfiguration map[int]bool) map[uuid.UUID]bool {
+func (cfg *config) getActiveClientIds(expectedConfiguration map[string]bool) map[uuid.UUID]bool {
 	activeClientIds := make(map[uuid.UUID]bool)
 	for s := range expectedConfiguration {
-		activeClientIds[cfg.orderedClientIds[s]] = true
+		sI, err := strconv.Atoi(s)
+		if err != nil {
+			panic(err)
+		}
+		activeClientIds[cfg.orderedClientIds[sI]] = true
 	}
 
 	return activeClientIds
 }
 
-func (cfg *config) getActiveClient(expectedConfiguration map[int]bool) (uuid.UUID, *Client, Messager) {
+func (cfg *config) getActiveClient(expectedConfiguration map[string]bool) (uuid.UUID, *Client, Messager) {
 	var cId uuid.UUID
 	var mg Messager
 	for s := range expectedConfiguration {
-		cId = cfg.orderedClientIds[s]
-		mg = cfg.orderedMessagers[s]
+		sI, err := strconv.Atoi(s)
+		if err != nil {
+			panic(err)
+		}
+		cId = cfg.orderedClientIds[sI]
+		mg = cfg.orderedMessagers[sI]
 		break
 	}
 

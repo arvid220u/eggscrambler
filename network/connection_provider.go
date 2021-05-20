@@ -7,6 +7,9 @@ and executing the rpc just as labrpc does. Using this class should let us mainta
 similar interface in our code but swap out whether we want to use labrpc or real
 ip addresses */
 type ConnectionProvider interface {
-	Call(server int, svcMeth string, args interface{}, reply interface{}) bool
+	// Call returns true if and only if the call was successful
+	Call(server string, svcName string, svcMeth string, args interface{}, reply interface{}) bool
+	// Me returns the address of this Host
+	Me() string
 	NumPeers() int
 }

@@ -3,6 +3,7 @@ package anonbcast
 import (
 	"fmt"
 	"github.com/arvid220u/eggscrambler/libraft"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 func TestServerMockraftNoFailures(t *testing.T) {
 	applyCh := make(chan libraft.ApplyMsg)
 	rf := mockraft.New(applyCh)
-	s := NewServer(0, rf)
+	s := NewServer("0", rf)
 
 	updCh, i := s.GetUpdCh()
 
@@ -53,7 +54,7 @@ func (mg MessageGenerator) Message(round int) []byte {
 func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	applyCh := make(chan libraft.ApplyMsg)
 	rf := mockraft.New(applyCh)
-	s := NewServer(0, rf)
+	s := NewServer("0", rf)
 
 	net := labrpc.MakeNetwork()
 	defer net.Cleanup()
@@ -71,9 +72,9 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 	net.Connect("client3", "server")
 	net.Enable("client3", true)
 
-	cp1 := network.New([]*labrpc.ClientEnd{end1})
-	cp2 := network.New([]*labrpc.ClientEnd{end2})
-	cp3 := network.New([]*labrpc.ClientEnd{end3})
+	cp1 := network.New([]*labrpc.ClientEnd{end1}, 0)
+	cp2 := network.New([]*labrpc.ClientEnd{end2}, 0)
+	cp3 := network.New([]*labrpc.ClientEnd{end3}, 0)
 
 	var mu sync.Mutex
 	mg1 := MessageGenerator{
@@ -94,14 +95,16 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 		ProtocolTimeout: time.Second * 10,
 		MessageSize:     100,
 	}
-	c1 := NewClient(s, mg1, cp1, clcf)
+	seedConf := make(map[string]bool)
+	seedConf["0"] = true
+	c1 := NewClient(s, mg1, cp1, seedConf, clcf)
 	results := c1.CreateResCh()
 	defer c1.DestroyResCh(results)
 	orderedResults := make(chan RoundResult)
 	ro := &resultOrderer{}
 	go ro.order(results, orderedResults, 0)
-	c2 := NewClient(s, mg2, cp2, clcf)
-	c3 := NewClient(s, mg3, cp3, clcf)
+	c2 := NewClient(s, mg2, cp2, seedConf, clcf)
+	c3 := NewClient(s, mg3, cp3, seedConf, clcf)
 
 	for i := 0; i < 100; i++ {
 		if i%2 == 0 {
@@ -202,9 +205,10 @@ func TestUnreliableNetBasic(t *testing.T) {
 
 func TestParticipantsAllInInitialConfiguration(t *testing.T) {
 	servers := 3
-	expectedConfiguration := make(map[int]bool)
+	expectedConfiguration := make(map[string]bool)
 	for i := 0; i < servers; i++ {
-		expectedConfiguration[i] = true
+		iS := strconv.Itoa(i)
+		expectedConfiguration[iS] = true
 	}
 
 	cfg := make_config(t, servers, false, -1)
@@ -218,13 +222,14 @@ func TestParticipantsAllInInitialConfiguration(t *testing.T) {
 func TestParticipantsOneNotInInitialConfiguration(t *testing.T) {
 	servers := 4
 	serversInitiallyInConfiguration := servers - 1
-	expectedConfiguration := make(map[int]bool)
-	initialConfiguration := make(map[int]bool)
+	expectedConfiguration := make(map[string]bool)
+	initialConfiguration := make(map[string]bool)
 	for i := 0; i < servers; i++ {
+		iS := strconv.Itoa(i)
 		if i < serversInitiallyInConfiguration {
-			initialConfiguration[i] = true
+			initialConfiguration[iS] = true
 		}
-		expectedConfiguration[i] = true
+		expectedConfiguration[iS] = true
 	}
 
 	cfg := make_config_with_initial_config(t, servers, false, -1, initialConfiguration)
@@ -251,13 +256,14 @@ func TestAbortSubmitTimeout(t *testing.T) {
 	cfg.begin("Abort timeout with disconnected client.")
 	time.Sleep(5 * time.Second) // wait for everyone to become participant
 
-	initialConfiguration := make(map[int]bool)
-	liveConfiguration := make(map[int]bool)
+	initialConfiguration := make(map[string]bool)
+	liveConfiguration := make(map[string]bool)
 	for i := 0; i < servers; i++ {
+		iS := strconv.Itoa(i)
 		if i != indexToDisconnect {
-			liveConfiguration[i] = true
+			liveConfiguration[iS] = true
 		}
-		initialConfiguration[i] = true
+		initialConfiguration[iS] = true
 	}
 
 	// make sure all servers are in the round
@@ -288,9 +294,10 @@ func TestAbortClientKilled(t *testing.T) {
 	cfg.begin("Abort caused by dead client.")
 	time.Sleep(5 * time.Second) // wait for everyone to become participant
 
-	initialConfiguration := make(map[int]bool)
+	initialConfiguration := make(map[string]bool)
 	for i := 0; i < servers; i++ {
-		initialConfiguration[i] = true
+		iS := strconv.Itoa(i)
+		initialConfiguration[iS] = true
 	}
 
 	// make sure all servers are in the round

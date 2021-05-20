@@ -53,6 +53,7 @@ package labrpc
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"math/rand"
 	"reflect"
@@ -461,14 +462,16 @@ func MakeService(rcvr interface{}) *Service {
 		mtype := method.Type
 		mname := method.Name
 
-		//fmt.Printf("%v pp %v ni %v 1k %v 2k %v no %v\n",
-		//	mname, method.PkgPath, mtype.NumIn(), mtype.In(1).Kind(), mtype.In(2).Kind(), mtype.NumOut())
+		//fmt.Printf("%v pp %v ni %v 1k %v 2k %v 3k %v no %v\n",
+		//	mname, method.PkgPath, mtype.NumIn(), mtype.In(1).Kind(), mtype.In(2).Kind(), mtype.In(3).Kind(), mtype.NumOut())
 
 		if method.PkgPath != "" || // capitalized?
-			mtype.NumIn() != 3 ||
+			mtype.NumIn() != 4 ||
+			mtype.In(1).Name() != "Context" ||
 			//mtype.In(1).Kind() != reflect.Ptr ||
-			mtype.In(2).Kind() != reflect.Ptr ||
-			mtype.NumOut() != 0 {
+			mtype.In(3).Kind() != reflect.Ptr ||
+			mtype.NumOut() != 1 ||
+			mtype.Out(0).Name() != "error" {
 			// the method is not suitable for a handler
 			//fmt.Printf("bad method: %v\n", mname)
 		} else {
@@ -492,13 +495,13 @@ func (svc *Service) dispatch(methname string, req reqMsg) replyMsg {
 		ad.Decode(args.Interface())
 
 		// allocate space for the reply.
-		replyType := method.Type.In(2)
+		replyType := method.Type.In(3)
 		replyType = replyType.Elem()
 		replyv := reflect.New(replyType)
 
 		// call the method.
 		function := method.Func
-		function.Call([]reflect.Value{svc.rcvr, args.Elem(), replyv})
+		function.Call([]reflect.Value{svc.rcvr, reflect.ValueOf(context.Background()), args.Elem(), replyv})
 		// encode the reply.
 		rb := new(bytes.Buffer)
 		re := labgob.NewEncoder(rb)

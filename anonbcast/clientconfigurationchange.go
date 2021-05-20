@@ -17,7 +17,7 @@ func (c *Client) getMembership(isProvisionalReq bool) bool {
 		c.mu.Lock()
 		potentialLeader := c.currConf[c.lastKnownLeaderInd]
 		c.mu.Unlock()
-		ok := c.cp.Call(potentialLeader, "Server.InConfiguration", &args, &reply)
+		ok := c.cp.Call(potentialLeader, "Server", "InConfiguration", &args, &reply)
 		inConfiguration = reply.InConfiguration
 		if !ok || !reply.IsLeader {
 			c.updateLeader()
@@ -49,7 +49,7 @@ func (c *Client) attemptProvisional() bool {
 		c.mu.Lock()
 		potentialLeader := c.currConf[c.lastKnownLeaderInd]
 		c.mu.Unlock()
-		ok := c.cp.Call(potentialLeader, "Server.AddProvisional", &args, &reply)
+		ok := c.cp.Call(potentialLeader, "Server", "AddProvisional", &args, &reply)
 		if !ok || reply.Error == libraft.AP_NOT_LEADER {
 			c.updateLeader()
 			continue
@@ -78,7 +78,7 @@ func (c *Client) attemptAddRemove(isAdd bool) libraft.AddRemoveServerError {
 		c.mu.Lock()
 		potentialLeader := c.currConf[c.lastKnownLeaderInd]
 		c.mu.Unlock()
-		ok := c.cp.Call(potentialLeader, "Server.AddRemove", &args, &reply)
+		ok := c.cp.Call(potentialLeader, "Server", "AddRemove", &args, &reply)
 		arError = reply.Error
 		if !ok || reply.Error == libraft.AR_NOT_LEADER {
 			c.updateLeader()
@@ -155,10 +155,12 @@ func (c *Client) removeSelf() {
 			panic("(Client) Shouldn't get provisional err on remove.")
 		}
 
-		c.mu.Lock()
-		tempActive := c.active
-		c.mu.Unlock()
-		if !tempActive {
+		// we will not receive an update from the server, because the server is not in the current config
+		// thus we have to set active ourselves
+		if err == libraft.AR_OK {
+			c.mu.Lock()
+			c.active = false
+			c.mu.Unlock()
 			return
 		}
 

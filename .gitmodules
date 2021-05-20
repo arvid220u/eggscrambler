@@ -1,3 +1,6 @@
 [submodule "raft"]
 	path = raft
 	url = ../eggscrambler-raft
+[submodule "go-libp2p-gorpc"]
+	path = go-libp2p-gorpc
+	url = ../go-libp2p-gorpc
