@@ -6,7 +6,7 @@ See `report.pdf` for a detailed summary of the system.
 
 Run:
 ```
-git clone git@github.com/arvid220u/eggscrambler
+git clone https://github.com/arvid220u/eggscrambler
 ```
 (if you have access to [eggscrambler-raft](https://github.com/arvid220u/eggscrambler-raft), run instead `git clone --recursive git@github.com/arvid220u/eggscrambler`)
 
