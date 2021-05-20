@@ -12,9 +12,9 @@ git clone git@github.com/arvid220u/eggscrambler
 
 For testing:
 ```
-cd anonbcast && RAFT=../raft.so go test -v
+cd anonbcast && RAFT=../darwin20.2.0-raft.so go test -v
 ```
-(the `RAFT` environment variable may be removed if you have access to `eggscrambler-raft`)
+(where `darwin20.2.0-raft.so` (for mac) can be replaced with another platform-specific version. the `RAFT` environment variable may be removed if you have access to `eggscrambler-raft`)
 
 For running the application:
 ```
