@@ -270,7 +270,11 @@ func (cfg *config) makeClient(m Messager, localSrv int, to []int) *Client {
 		ProtocolTimeout: TEST_PROTOCOL_TIMEOUT,
 		MessageSize:     100,
 	}
-	cl := NewClient(cfg.servers[localSrv], m, cp, clcf)
+	seedConf := make(map[string]bool)
+	for j := 0; j < cfg.n; j++ {
+		seedConf[strconv.Itoa(j)] = true
+	}
+	cl := NewClient(cfg.servers[localSrv], m, cp, seedConf, clcf)
 	cfg.clients[cl] = endnames
 	cfg.ConnectClientUnlocked(cl, to)
 	return cl

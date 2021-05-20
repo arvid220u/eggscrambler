@@ -95,14 +95,16 @@ func TestServerClientSingleMachineNoFailures(t *testing.T) {
 		ProtocolTimeout: time.Second * 10,
 		MessageSize:     100,
 	}
-	c1 := NewClient(s, mg1, cp1, clcf)
+	seedConf := make(map[string]bool)
+	seedConf["0"] = true
+	c1 := NewClient(s, mg1, cp1, seedConf, clcf)
 	results := c1.CreateResCh()
 	defer c1.DestroyResCh(results)
 	orderedResults := make(chan RoundResult)
 	ro := &resultOrderer{}
 	go ro.order(results, orderedResults, 0)
-	c2 := NewClient(s, mg2, cp2, clcf)
-	c3 := NewClient(s, mg3, cp3, clcf)
+	c2 := NewClient(s, mg2, cp2, seedConf, clcf)
+	c3 := NewClient(s, mg3, cp3, seedConf, clcf)
 
 	for i := 0; i < 100; i++ {
 		if i%2 == 0 {

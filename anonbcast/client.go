@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -884,14 +883,14 @@ func (c *Client) Start(round int) error {
 	return nil
 }
 
-func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf ClientConfig) *Client {
+// seedConfg is a set
+func NewClient(s *Server, m Messager, cp network.ConnectionProvider, seedConf map[string]bool, conf ClientConfig) *Client {
 	c := new(Client)
 	c.Id = uuid.New()
 	c.m = m
 	c.pending = newEliminationQueue()
 	c.lastUpdate = newLastStateMachine()
 	c.cp = cp
-	c.currConf = make([]string, 0)
 	var i int
 	c.updCh, i = s.GetUpdCh()
 	c.closeUpdCh = func() {
@@ -904,9 +903,13 @@ func NewClient(s *Server, m Messager, cp network.ConnectionProvider, conf Client
 
 	// Assume the configuration has all possible servers, until we get notified otherwise
 	// TODO: take in currConf as an argument? should it be the same as the server's conf?
-	peers := cp.NumPeers()
-	for i := 0; i < peers; i++ {
-		c.currConf = append(c.currConf, strconv.Itoa(i))
+	//peers := cp.NumPeers()
+	//for i := 0; i < peers; i++ {
+	//	c.currConf = append(c.currConf, strconv.Itoa(i))
+	//}
+	c.assertf(len(seedConf) > 0, "must seed with some users to start! either with oneself or other users")
+	for srv := range seedConf {
+		c.currConf = append(c.currConf, srv)
 	}
 
 	go c.readUpdates()

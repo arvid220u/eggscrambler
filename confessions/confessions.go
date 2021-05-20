@@ -91,13 +91,15 @@ func main() {
 		ProtocolTimeout: time.Second * 10,
 		MessageSize:     100,
 	}
-	c1 := anonbcast.NewClient(s, cg1, cp1, clcf)
+	seedConf := make(map[string]bool)
+	seedConf["0"] = true
+	c1 := anonbcast.NewClient(s, cg1, cp1, seedConf, clcf)
 	defer c1.Kill()
 	results := c1.CreateResCh()
 	defer c1.DestroyResCh(results)
 	orderedResults := make(chan anonbcast.RoundResult)
 	go resultOrderer(results, orderedResults)
-	c2 := anonbcast.NewClient(s, cg2, cp2, clcf)
+	c2 := anonbcast.NewClient(s, cg2, cp2, seedConf, clcf)
 	defer c2.Kill()
 
 	for i := 0; ; i++ {
