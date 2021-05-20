@@ -1,9 +1,8 @@
 package anonbcast
 
 import (
+	"github.com/arvid220u/6.824-project/libraft"
 	"time"
-
-	"github.com/arvid220u/6.824-project/raft"
 )
 
 // Polls servers for configuration (active or provisional)
@@ -51,13 +50,13 @@ func (c *Client) attemptProvisional() bool {
 		potentialLeader := c.currConf[c.lastKnownLeaderInd]
 		c.mu.Unlock()
 		ok := c.cp.Call(potentialLeader, "Server.AddProvisional", &args, &reply)
-		if !ok || reply.Error == raft.AP_NOT_LEADER {
+		if !ok || reply.Error == libraft.AP_NOT_LEADER {
 			c.updateLeader()
 			continue
 		}
 
 		inActiveConfiguration := false
-		if reply.Error == raft.AP_ALREADY_IN_CONFIGURATION {
+		if reply.Error == libraft.AP_ALREADY_IN_CONFIGURATION {
 			inActiveConfiguration = true
 			c.mu.Lock()
 			c.active = true
@@ -71,9 +70,9 @@ func (c *Client) attemptProvisional() bool {
 	return false
 }
 
-func (c *Client) attemptAddRemove(isAdd bool) raft.AddRemoveServerError {
+func (c *Client) attemptAddRemove(isAdd bool) libraft.AddRemoveServerError {
 	args := AddRemoveArgs{Server: c.serverId, IsAdd: isAdd}
-	var arError raft.AddRemoveServerError
+	var arError libraft.AddRemoveServerError
 	for !c.killed() {
 		reply := AddRemoveReply{}
 		c.mu.Lock()
@@ -81,10 +80,10 @@ func (c *Client) attemptAddRemove(isAdd bool) raft.AddRemoveServerError {
 		c.mu.Unlock()
 		ok := c.cp.Call(potentialLeader, "Server.AddRemove", &args, &reply)
 		arError = reply.Error
-		if !ok || reply.Error == raft.AR_NOT_LEADER {
+		if !ok || reply.Error == libraft.AR_NOT_LEADER {
 			c.updateLeader()
 			continue
-		} else if reply.Error == raft.AR_NEW_LEADER || reply.Error == raft.AR_CONCURRENT_CHANGE {
+		} else if reply.Error == libraft.AR_NEW_LEADER || reply.Error == libraft.AR_CONCURRENT_CHANGE {
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
@@ -128,7 +127,7 @@ func (c *Client) addSelf() {
 	for !c.killed() {
 		err := c.attemptAddRemove(true)
 
-		if err == raft.AR_NOT_PROVISIONAL {
+		if err == libraft.AR_NOT_PROVISIONAL {
 			panic("(Client) Add without becoming provisional shouldn't occur.")
 		}
 
@@ -152,7 +151,7 @@ func (c *Client) removeSelf() {
 	for !c.killed() {
 		err := c.attemptAddRemove(false)
 
-		if err == raft.AR_NOT_PROVISIONAL {
+		if err == libraft.AR_NOT_PROVISIONAL {
 			panic("(Client) Shouldn't get provisional err on remove.")
 		}
 

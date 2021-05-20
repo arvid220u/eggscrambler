@@ -2,6 +2,7 @@ package anonbcast
 
 import (
 	"fmt"
+	"github.com/arvid220u/6.824-project/libraft"
 	"sync"
 	"testing"
 	"time"
@@ -10,11 +11,10 @@ import (
 	"github.com/arvid220u/6.824-project/network"
 
 	"github.com/arvid220u/6.824-project/mockraft"
-	"github.com/arvid220u/6.824-project/raft"
 )
 
 func TestServerMockraftNoFailures(t *testing.T) {
-	applyCh := make(chan raft.ApplyMsg)
+	applyCh := make(chan libraft.ApplyMsg)
 	rf := mockraft.New(applyCh)
 	s := NewServer(0, rf)
 
@@ -51,7 +51,7 @@ func (mg MessageGenerator) Message(round int) []byte {
 }
 
 func TestServerClientSingleMachineNoFailures(t *testing.T) {
-	applyCh := make(chan raft.ApplyMsg)
+	applyCh := make(chan libraft.ApplyMsg)
 	rf := mockraft.New(applyCh)
 	s := NewServer(0, rf)
 

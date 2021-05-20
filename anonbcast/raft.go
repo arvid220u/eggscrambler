@@ -1,54 +1,35 @@
 package anonbcast
 
-import "github.com/arvid220u/6.824-project/raft"
+import (
+	"github.com/arvid220u/6.824-project/libraft"
+	"github.com/arvid220u/6.824-project/network"
+	"github.com/arvid220u/6.824-project/raft"
+	"log"
+	"os"
+	"plugin"
+)
 
-// Raft can manage a shared log.
-type Raft interface {
-	// Start initiates consensus on the supplied command.
-	// If this server isn't the leader, return false. Otherwise, start
-	// the agreement and return immediately.
-	//
-	// The first return value is the index that the command will appear at
-	// if it's ever committed. The second return value is the current
-	// term. The third return value is true if this server believes it is
-	// the leader.
-	Start(command interface{}) (int, int, bool)
+const compiledRaftEnvKey = "RAFT"
 
-	// Kill kills all long-running goroutines and releases any memory
-	// used by the Raft instance. After calling Kill no other methods
-	// may be called.
-	Kill()
+func makeRaft(cp network.ConnectionProvider, me int, initialConfig map[int]bool,
+	persister *libraft.Persister, applyCh chan libraft.ApplyMsg, sendAllLogAsInt bool) libraft.Raft {
 
-	// Snapshot should be called after the service using Raft has created
-	// a snapshot of its data up to and including index. Raft may then
-	// discard a prefix of its log.
-	Snapshot(index int, snapshot []byte)
+	compiledRaft := os.Getenv(compiledRaftEnvKey)
 
-	// CondInstallSnapshot returns true if the service should install a snapshot
-	// that was given to it on the applyCh. If false is returned, the service should
-	// discard the snapshot.
-	CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool
-
-	// GetApplyCh returns a channel that Raft sends updates on. The same channel
-	// is always returned.
-	GetApplyCh() <-chan raft.ApplyMsg
-
-	// return currentTerm and whether this server
-	// believes it is the leader.
-	// Useful for testing.
-	GetState() (int, bool)
-
-	// Returns whether or not the server thinks it's the leader
-	// and a set of servers with provisional status
-	GetProvisionalConfiguration() (bool, map[int]bool)
-
-	// // Returns whether or not the server thinks it's the leader
-	// and a set of servers with voting status
-	GetCurrentConfiguration() (bool, map[int]bool)
-
-	AddProvisional(peer int) (int, raft.AddProvisionalError)
-
-	RemoveServer(peer int) (<-chan bool, raft.AddRemoveServerError)
-
-	AddServer(peer int) (<-chan bool, raft.AddRemoveServerError)
+	if compiledRaft == "" {
+		// use the actual raft!
+		return raft.Make(cp, me, initialConfig, persister, applyCh, sendAllLogAsInt)
+	} else {
+		// use the libified raft!
+		p, err := plugin.Open(compiledRaft)
+		if err != nil {
+			log.Fatalf("cannot load raft plugin %v", compiledRaft)
+		}
+		xmakef, err := p.Lookup("Make")
+		if err != nil {
+			log.Fatalf("cannot find Make in %v", compiledRaft)
+		}
+		makef := xmakef.(func(network.ConnectionProvider, int, map[int]bool, *libraft.Persister, chan libraft.ApplyMsg, bool) libraft.Raft)
+		return makef(cp, me, initialConfig, persister, applyCh, sendAllLogAsInt)
+	}
 }

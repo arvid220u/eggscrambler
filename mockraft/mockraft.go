@@ -1,15 +1,14 @@
 package mockraft
 
 import (
+	"github.com/arvid220u/6.824-project/libraft"
 	"sync"
-
-	"github.com/arvid220u/6.824-project/raft"
 )
 
 // Mockraft is a single-server mock of Raft, that always commits every single entry, immediately.
 type Mockraft struct {
 	log     []interface{}
-	applyCh chan raft.ApplyMsg
+	applyCh chan libraft.ApplyMsg
 	mu      sync.Mutex
 }
 
@@ -18,7 +17,7 @@ func (m *Mockraft) Start(command interface{}) (int, int, bool) {
 	defer m.mu.Unlock()
 	m.log = append(m.log, command)
 	go func(m *Mockraft, command interface{}, index int) {
-		m.applyCh <- raft.ApplyMsg{
+		m.applyCh <- libraft.ApplyMsg{
 			Command:      command,
 			CommandTerm:  1,
 			CommandIndex: index,
@@ -41,7 +40,7 @@ func (m *Mockraft) GetState() (int, bool) {
 	return 1, true
 }
 
-func (m *Mockraft) GetApplyCh() <-chan raft.ApplyMsg {
+func (m *Mockraft) GetApplyCh() <-chan libraft.ApplyMsg {
 	return m.applyCh
 }
 
@@ -58,20 +57,20 @@ func (m *Mockraft) GetCurrentConfiguration() (bool, map[int]bool) {
 }
 
 // Implemented as no-op as it shouldn't be called on mockraft
-func (m *Mockraft) AddProvisional(peer int) (int, raft.AddProvisionalError) {
-	return 0, raft.AP_SUCCESS
+func (m *Mockraft) AddProvisional(peer int) (int, libraft.AddProvisionalError) {
+	return 0, libraft.AP_SUCCESS
 }
 
 // Implemented as no-op as it shouldn't be called on mockraft
-func (m *Mockraft) RemoveServer(peer int) (<-chan bool, raft.AddRemoveServerError) {
-	return nil, raft.AR_OK
+func (m *Mockraft) RemoveServer(peer int) (<-chan bool, libraft.AddRemoveServerError) {
+	return nil, libraft.AR_OK
 }
 
 // Implemented as no-op as it shouldn't be called on mockraft
-func (m *Mockraft) AddServer(peer int) (<-chan bool, raft.AddRemoveServerError) {
-	return nil, raft.AR_OK
+func (m *Mockraft) AddServer(peer int) (<-chan bool, libraft.AddRemoveServerError) {
+	return nil, libraft.AR_OK
 }
 
-func New(applyCh chan raft.ApplyMsg) *Mockraft {
+func New(applyCh chan libraft.ApplyMsg) *Mockraft {
 	return &Mockraft{applyCh: applyCh}
 }

@@ -1,7 +1,7 @@
 package anonbcast
 
 import (
-	"github.com/arvid220u/6.824-project/raft"
+	"github.com/arvid220u/6.824-project/libraft"
 )
 
 type AddRemoveArgs struct {
@@ -11,7 +11,7 @@ type AddRemoveArgs struct {
 
 type AddRemoveReply struct {
 	Submitted bool
-	Error     raft.AddRemoveServerError
+	Error     libraft.AddRemoveServerError
 }
 
 type AddProvisionalArgs struct {
@@ -19,7 +19,7 @@ type AddProvisionalArgs struct {
 }
 
 type AddProvisionalReply struct {
-	Error raft.AddProvisionalError
+	Error libraft.AddProvisionalError
 }
 
 type InConfigurationArgs struct {
@@ -56,16 +56,16 @@ func (s *Server) AddProvisional(args *AddProvisionalArgs, reply *AddProvisionalR
 
 // Essentially a pass through for the AddRemove raft RPC
 func (s *Server) AddRemove(args *AddRemoveArgs, reply *AddRemoveReply) {
-	var err raft.AddRemoveServerError
+	var err libraft.AddRemoveServerError
 	if args.IsAdd {
 		_, err = s.rf.AddServer(args.Server)
 	} else {
 		_, err = s.rf.RemoveServer(args.Server)
 	}
 
-	if err == raft.AR_OK || err == raft.AR_ALREADY_COMPLETE {
+	if err == libraft.AR_OK || err == libraft.AR_ALREADY_COMPLETE {
 		reply.Submitted = true
-		reply.Error = raft.AR_OK
+		reply.Error = libraft.AR_OK
 	} else {
 		reply.Submitted = false
 		reply.Error = err

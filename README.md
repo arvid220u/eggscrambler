@@ -17,3 +17,7 @@ For running the application:
 ```
 cd confessions && go run confessions.go
 ```
+
+## Raft
+
+Because the Raft code is a solution to the 6.824 labs, the staff has asked us to not publish it. Therefore, it is in a private submodule (following [this guide](https://www.taniarascia.com/git-submodules-private-content/)).

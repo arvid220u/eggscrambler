@@ -1,6 +1,7 @@
 package anonbcast
 
 import (
+	"github.com/arvid220u/6.824-project/libraft"
 	"os"
 	"testing"
 
@@ -18,7 +19,6 @@ import (
 
 	"github.com/arvid220u/6.824-project/labrpc"
 	"github.com/arvid220u/6.824-project/network"
-	"github.com/arvid220u/6.824-project/raft"
 	"github.com/google/uuid"
 )
 
@@ -60,7 +60,7 @@ type config struct {
 	net          *labrpc.Network
 	n            int
 	servers      []*Server
-	saved        []*raft.Persister
+	saved        []*libraft.Persister
 	endnames     [][]string // names of each server's sending ClientEnds
 	clients      map[*Client][]string
 	maxraftstate int
@@ -385,7 +385,7 @@ func (cfg *config) StartServer(i int) {
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
 	} else {
-		cfg.saved[i] = raft.MakePersister()
+		cfg.saved[i] = libraft.MakePersister()
 	}
 	cfg.mu.Unlock()
 
@@ -459,7 +459,7 @@ func make_config_with_initial_config(t *testing.T, n int, unreliable bool, maxra
 	cfg.net = labrpc.MakeNetwork()
 	cfg.n = n
 	cfg.servers = make([]*Server, cfg.n)
-	cfg.saved = make([]*raft.Persister, cfg.n)
+	cfg.saved = make([]*libraft.Persister, cfg.n)
 	cfg.endnames = make([][]string, cfg.n)
 	cfg.clients = make(map[*Client][]string)
 	cfg.maxraftstate = maxraftstate

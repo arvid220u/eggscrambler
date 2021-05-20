@@ -2,13 +2,13 @@ package anonbcast
 
 import (
 	"fmt"
+	"github.com/arvid220u/6.824-project/libraft"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/arvid220u/6.824-project/labgob"
 	"github.com/arvid220u/6.824-project/network"
-	"github.com/arvid220u/6.824-project/raft"
 	"github.com/davecgh/go-spew/spew"
 )
 
@@ -26,7 +26,7 @@ type UpdateMsg struct {
 // that can be consumed by a local Client for reading the latest state.
 type Server struct {
 	Me int
-	rf Raft
+	rf libraft.Raft
 
 	dead int32 // set by Kill(), not protected by mu
 
@@ -34,7 +34,7 @@ type Server struct {
 	sm StateMachine // protected by mu
 
 	// applyCh is for communication from raft to the server
-	applyCh <-chan raft.ApplyMsg
+	applyCh <-chan libraft.ApplyMsg
 	// updChs stores all channels on which state machine updates should be sent.
 	// Each update should be sent to each channel.
 	updChs     map[int]chan UpdateMsg // map protected by mu
@@ -44,7 +44,7 @@ type Server struct {
 	resps RespChannels // protected by mu
 }
 
-func NewServer(me int, rf Raft) *Server {
+func NewServer(me int, rf libraft.Raft) *Server {
 	labgob.Register(masseyOmuraCrypto{})
 	labgob.Register(JoinOp{})
 	labgob.Register(StartOp{})
@@ -70,9 +70,9 @@ func NewServer(me int, rf Raft) *Server {
 }
 
 // Creates and starts new anonbcast server using a real raft instance
-func MakeServer(cp network.ConnectionProvider, me int, initialCfg map[int]bool, persister *raft.Persister, maxraftstate int) *Server {
-	applyCh := make(chan raft.ApplyMsg, 1)
-	rf := raft.Make(cp, me, initialCfg, persister, applyCh, false)
+func MakeServer(cp network.ConnectionProvider, me int, initialCfg map[int]bool, persister *libraft.Persister, maxraftstate int) *Server {
+	applyCh := make(chan libraft.ApplyMsg, 1)
+	rf := makeRaft(cp, me, initialCfg, persister, applyCh, false)
 	return NewServer(me, rf)
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"github.com/arvid220u/6.824-project/libraft"
 	"log"
 	"os"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	"github.com/arvid220u/6.824-project/labrpc"
 	"github.com/arvid220u/6.824-project/mockraft"
 	"github.com/arvid220u/6.824-project/network"
-	"github.com/arvid220u/6.824-project/raft"
 )
 
 type ConfessionsGenerator struct {
@@ -55,7 +55,7 @@ func resultOrderer(unorderedResults <-chan anonbcast.RoundResult, orderedResults
 // 	main package that starts the confessions app.
 func main() {
 	fmt.Println("welcome to the fully anonymous MIT confessions!")
-	applyCh := make(chan raft.ApplyMsg)
+	applyCh := make(chan libraft.ApplyMsg)
 	rf := mockraft.New(applyCh)
 	s := anonbcast.NewServer(0, rf)
 	defer s.Kill()
