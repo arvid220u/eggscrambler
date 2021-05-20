@@ -10,3 +10,5 @@ require (
 	github.com/libp2p/go-libp2p-gorpc v0.1.2
 	github.com/multiformats/go-multiaddr v0.3.1
 )
+
+replace github.com/libp2p/go-libp2p-gorpc => ./go-libp2p-gorpc
