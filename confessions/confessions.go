@@ -34,6 +34,9 @@ func (cg confessionsGenerator) Message(round int) []byte {
 	for i := 0; !done; i++ {
 		select {
 		case msg = <-cg.input:
+			if msg == "poison" {
+				return nil
+			}
 			fmt.Printf("Waiting for everyone to submit...\n")
 			done = true
 		case <-time.NewTimer(cg.timeout).C:
@@ -84,6 +87,7 @@ func main() {
 			panic(err)
 		}
 		fmt.Printf("Joining seed server with ID: %v\n", join)
+		fmt.Printf("(My address: %v)\n", cp.Me())
 		seedConf[join] = true
 	}
 
@@ -118,6 +122,9 @@ func main() {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt)
 	defer signal.Stop(signalChan)
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 
 	stop := false
 	for i := 0; !stop; i++ {
@@ -177,12 +184,23 @@ func main() {
 				i--
 				continue
 			}
-			select {
-			case r = <-results:
-			case <-signalChan:
-				fmt.Printf("Quitting gracefully...\n")
-				stop = true
-				break
+			doneSelect := false
+			for !doneSelect {
+				select {
+				case r = <-results:
+					doneSelect = true
+				case <-signalChan:
+					fmt.Printf("Quitting gracefully...\n")
+					stop = true
+					doneSelect = true
+					break
+				case <-ticker.C:
+					sm := c.GetLastStateMachine()
+					if sm.Round > i {
+						doneSelect = true
+						break
+					}
+				}
 			}
 			if stop {
 				break
@@ -195,6 +213,10 @@ func main() {
 			stop = true
 			break
 		}
+		select {
+		case cg.input <- "poison":
+		default:
+		}
 		if stop {
 			continue
 		}
@@ -202,10 +224,11 @@ func main() {
 			log.Fatalf("round %d not equal to index %d", r.Round, i)
 		}
 		if r.Succeeded {
-			fmt.Printf("Round %d succeeded! Anonymized broadcast messages are:\n", r.Round)
+			fmt.Printf("\n\u001b[32mRound %d succeeded!\u001b[0m Anonymized broadcast messages are:\n\n", r.Round)
 			for _, m := range r.Messages {
-				fmt.Printf("\t%s\n", string(m))
+				fmt.Printf("\t\u001b[31m%s\u001B[0m\n", string(m))
 			}
+			fmt.Printf("\n")
 		} else {
 			fmt.Printf("Round %d failed :(\n", r.Round)
 		}
