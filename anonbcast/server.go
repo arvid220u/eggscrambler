@@ -1,6 +1,7 @@
 package anonbcast
 
 import (
+	"context"
 	"fmt"
 	"github.com/arvid220u/eggscrambler/libraft"
 	"sync"
@@ -100,7 +101,7 @@ func (s *Server) IsLeader(args interface{}, reply *OpRpcReply) {
 // Returns OK if this operation shouldn't be retried (because it has been committed or
 // because it is a no-op), and ErrWrongLeader if the operation should be submitted
 // to another server that might be the leader.
-func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
+func (s *Server) SubmitOp(ctx context.Context, args *Op, reply *OpRpcReply) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.logf(dInfo, "SubmitOp called with args: %v", *args)
@@ -108,7 +109,7 @@ func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 	if s.sm.GuaranteedNoEffect(*args) {
 		// even if this server is not the leader, there is no need to retry
 		reply.Err = OK
-		return
+		return nil
 	}
 
 	index, term, ok := s.rf.Start(*args)
@@ -117,7 +118,7 @@ func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 
 	if !ok {
 		reply.Err = ErrWrongLeader
-		return
+		return nil
 	}
 
 	ch := s.resps.Create(term, index)
@@ -136,10 +137,11 @@ func (s *Server) SubmitOp(args *Op, reply *OpRpcReply) {
 
 	if !resp {
 		reply.Err = ErrWrongLeader
-		return
+		return nil
 	}
 
 	reply.Err = OK
+	return nil
 }
 
 func (s *Server) applier() {

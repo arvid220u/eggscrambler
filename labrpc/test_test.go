@@ -1,6 +1,9 @@
 package labrpc
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 import "strconv"
 import "sync"
 import "runtime"
@@ -42,7 +45,7 @@ func (js *JunkServer) Handler3(args int, reply *int) {
 }
 
 // args is a pointer
-func (js *JunkServer) Handler4(args *JunkArgs, reply *JunkReply) {
+func (js *JunkServer) Handler4(ctx context.Context, args *JunkArgs, reply *JunkReply) {
 	reply.X = "pointer"
 }
 

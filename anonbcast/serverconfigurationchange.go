@@ -1,6 +1,7 @@
 package anonbcast
 
 import (
+	"context"
 	"github.com/arvid220u/eggscrambler/libraft"
 )
 
@@ -34,7 +35,7 @@ type InConfigurationReply struct {
 
 // Returns whether or not this Raft is a leader and whether or not the
 // given server is in this raft's configuration.
-func (s *Server) InConfiguration(args *InConfigurationArgs, reply *InConfigurationReply) {
+func (s *Server) InConfiguration(ctx context.Context, args *InConfigurationArgs, reply *InConfigurationReply) error {
 	var isLeader bool
 	var conf map[string]bool
 	if args.IsProvisionalReq {
@@ -46,16 +47,18 @@ func (s *Server) InConfiguration(args *InConfigurationArgs, reply *InConfigurati
 	_, ok := conf[args.Server]
 	reply.InConfiguration = ok
 	reply.IsLeader = isLeader
+	return nil
 }
 
 // Essentially a pass through for the AddProvisional raft RPC
-func (s *Server) AddProvisional(args *AddProvisionalArgs, reply *AddProvisionalReply) {
+func (s *Server) AddProvisional(ctx context.Context, args *AddProvisionalArgs, reply *AddProvisionalReply) error {
 	_, err := s.rf.AddProvisional(args.Server)
 	reply.Error = err
+	return nil
 }
 
 // Essentially a pass through for the AddRemove raft RPC
-func (s *Server) AddRemove(args *AddRemoveArgs, reply *AddRemoveReply) {
+func (s *Server) AddRemove(ctx context.Context, args *AddRemoveArgs, reply *AddRemoveReply) error {
 	var err libraft.AddRemoveServerError
 	if args.IsAdd {
 		_, err = s.rf.AddServer(args.Server)
@@ -70,4 +73,5 @@ func (s *Server) AddRemove(args *AddRemoveArgs, reply *AddRemoveReply) {
 		reply.Submitted = false
 		reply.Error = err
 	}
+	return nil
 }

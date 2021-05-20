@@ -9,7 +9,7 @@ ip addresses */
 type ConnectionProvider interface {
 	// Call returns true if and only if the call was successful
 	Call(server string, svcName string, svcMeth string, args interface{}, reply interface{}) bool
-	// Me returns the address of this host
+	// Me returns the address of this Host
 	Me() string
 	NumPeers() int
 }
