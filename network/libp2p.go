@@ -8,7 +8,6 @@ import (
 	"github.com/libp2p/go-libp2p-core/peer"
 	gorpc "github.com/libp2p/go-libp2p-gorpc"
 	"github.com/multiformats/go-multiaddr"
-	"log"
 )
 
 const rpcProtocolID = "/p2p/rpc/eggscrambler"
@@ -35,7 +34,7 @@ func (cp *Libp2pConnectionProvider) Call(server string, svcName string, svcMeth 
 		ctx := context.Background()
 		err = cp.Host.Connect(ctx, *peerInfo)
 		if err != nil {
-			log.Printf("Unsuccessfully connected to host: %v", err)
+			//log.Printf("Unsuccessfully connected to host (%s.%s): %v", svcName, svcMeth, err)
 			return false
 		}
 	}

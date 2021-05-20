@@ -155,10 +155,12 @@ func (c *Client) removeSelf() {
 			panic("(Client) Shouldn't get provisional err on remove.")
 		}
 
-		c.mu.Lock()
-		tempActive := c.active
-		c.mu.Unlock()
-		if !tempActive {
+		// we will not receive an update from the server, because the server is not in the current config
+		// thus we have to set active ourselves
+		if err == libraft.AR_OK {
+			c.mu.Lock()
+			c.active = false
+			c.mu.Unlock()
 			return
 		}
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"github.com/arvid220u/eggscrambler/anonbcast"
@@ -11,37 +12,47 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 )
 
-type confessionsGenerator struct{}
+type confessionsGenerator struct {
+	input   chan string
+	timeout time.Duration
+}
 
 func (cg confessionsGenerator) Message(round int) []byte {
-	reader := bufio.NewReader(os.Stdin)
+	// if someone else is waiting on input, frontrun them
+	select {
+	case cg.input <- "poison":
+	default:
+	}
 	fmt.Printf("Message to send in round %d: ", round)
-	msg, err := reader.ReadString('\n')
-	if err != nil {
-		log.Fatalf("err: %v", err)
+	var msg string
+	done := false
+	for i := 0; !done; i++ {
+		select {
+		case msg = <-cg.input:
+			fmt.Printf("Waiting for everyone to submit...\n")
+			done = true
+		case <-time.NewTimer(cg.timeout).C:
+			fmt.Printf("too late!\n")
+			done = true
+		}
 	}
 	msg = strings.TrimSuffix(msg, "\n")
 	return []byte(msg)
 }
 
-func resultOrderer(unorderedResults <-chan anonbcast.RoundResult, orderedResults chan<- anonbcast.RoundResult) {
-	var results []anonbcast.RoundResult
-	applyIndex := 0
+func readInput(input chan string) {
+	reader := bufio.NewReader(os.Stdin)
 	for {
-		r := <-unorderedResults
-		for len(results) <= r.Round {
-			results = append(results, anonbcast.RoundResult{Round: -1})
+		msg, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatalf("err: %v", err)
 		}
-		results[r.Round] = r
-
-		for applyIndex < len(results) && results[applyIndex].Round != -1 {
-			orderedResults <- results[applyIndex]
-			applyIndex++
-		}
+		input <- msg
 	}
 }
 
@@ -63,7 +74,12 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		_, err = peer.AddrInfoFromP2pAddr(ma)
+		peerInfo, err := peer.AddrInfoFromP2pAddr(ma)
+		if err != nil {
+			panic(err)
+		}
+		ctx := context.Background()
+		err = cp.Host.Connect(ctx, *peerInfo)
 		if err != nil {
 			panic(err)
 		}
@@ -83,7 +99,12 @@ func main() {
 		panic(err)
 	}
 
-	cg := confessionsGenerator{}
+	input := make(chan string)
+	cg := confessionsGenerator{
+		input:   input,
+		timeout: time.Second * 20,
+	}
+	go readInput(input)
 	clcf := anonbcast.ClientConfig{
 		MessageTimeout:  time.Second * 30,
 		ProtocolTimeout: time.Second * 10,
@@ -93,32 +114,89 @@ func main() {
 	defer c.Kill()
 	results := c.CreateResCh()
 	defer c.DestroyResCh(results)
-	orderedResults := make(chan anonbcast.RoundResult)
-	go resultOrderer(results, orderedResults)
 
-	for i := 0; ; i++ {
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	defer signal.Stop(signalChan)
+
+	stop := false
+	for i := 0; !stop; i++ {
 		sm := c.GetLastStateMachine()
 		if sm.Round > i {
 			continue
 		}
-		fmt.Printf("Waiting for 60 seconds before deciding to start round %v...\n", i)
+		me := false
+		for _, p := range sm.CurrentRoundInfo().Participants {
+			if p == c.Id {
+				me = true
+			}
+		}
+		for !me {
+			select {
+			case <-time.NewTimer(time.Second).C:
+			case <-signalChan:
+				fmt.Printf("Quitting gracefully...\n")
+				stop = true
+				break
+			}
+			if stop {
+				break
+			}
+			fmt.Printf("Waiting for round %d to progress...\n", sm.Round)
+			sm = c.GetLastStateMachine()
+			if sm.Round > i {
+				break
+			}
+			me = false
+			for _, p := range sm.CurrentRoundInfo().Participants {
+				if p == c.Id {
+					me = true
+				}
+			}
+		}
+		if stop {
+			continue
+		}
+		if sm.Round > i {
+			continue
+		}
+		fmt.Printf("Press enter to start round %v...\n", i)
 		var r anonbcast.RoundResult
 		select {
-		case <-time.NewTimer(time.Second * 60).C:
-			fmt.Printf("Starting round %d!\n", i)
+		case inputMsg := <-input:
+			if inputMsg != "poison" {
+				fmt.Printf("Starting round %d!\n", i)
+			}
 			err := c.Start(i)
 			if err != nil {
 				sm := c.GetLastStateMachine()
 				if sm.Round > i {
 					continue
 				}
-				i-- // we don't want to advance if the latest state machine is not ahead of us, we just want to retry
+				// TODO: abort this round! it may have gotten stuck for various reasons
+				i--
 				continue
 			}
-			r = <-orderedResults
+			select {
+			case r = <-results:
+			case <-signalChan:
+				fmt.Printf("Quitting gracefully...\n")
+				stop = true
+				break
+			}
+			if stop {
+				break
+			}
 			fmt.Printf("Got round %d result!\n", i)
-		case r = <-orderedResults:
+		case r = <-results:
 			fmt.Printf("Got round %d result!\n", i)
+		case <-signalChan:
+			fmt.Printf("Quitting gracefully...\n")
+			stop = true
+			break
+		}
+		if stop {
+			continue
 		}
 		if r.Round != i {
 			log.Fatalf("round %d not equal to index %d", r.Round, i)

@@ -773,6 +773,8 @@ func (c *Client) Kill() {
 			_ = c.submitOp(op)
 		}
 	}
+	// become inactive!
+	c.BecomeInactive()
 	// lock here to make sure that the operations after this point happen exactly once,
 	// even if Kill is called multiple times
 	c.killMu.Lock()
