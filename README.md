@@ -1,6 +1,6 @@
 # Eggscrambler
 
-See `report.pdf` for a detailed summary of the system.
+See `report.pdf` for a detailed summary of the system. Also, [here's a presentation](https://docs.google.com/presentation/d/122sLY_LXIb_H2V4cNmqFdX6s0l_g7-MTM48DuPij4Z4/edit?usp=sharing), including a demo at the last slide.
 
 ## Installation
 
@@ -18,7 +18,7 @@ cd anonbcast && RAFT=../raft-darwin20.2.0.so go test -v
 
 For running the application:
 ```
-cd confessions && go run confessions.go
+cd confessions && RAFT=../raft-darwin20.2.0.so go run confessions.go
 ```
 
 ## Overview
