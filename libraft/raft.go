@@ -1,9 +1,5 @@
 package libraft
 
-import (
-	"github.com/arvid220u/eggscrambler/network"
-)
-
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -72,11 +68,4 @@ type Raft interface {
 	RemoveServer(peer int) (<-chan bool, AddRemoveServerError)
 
 	AddServer(peer int) (<-chan bool, AddRemoveServerError)
-}
-
-func Make(cp network.ConnectionProvider, me int, initialConfig map[int]bool,
-	persister *Persister, applyCh chan ApplyMsg, sendAllLogAsInt bool) Raft {
-	//rf := raft.Make(cp, me, initialConfig, persister, applyCh, sendAllLogAsInt)
-	//return rf
-	return nil
 }
