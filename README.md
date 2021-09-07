@@ -10,6 +10,12 @@ git clone https://github.com/arvid220u/eggscrambler
 ```
 (if you have access to [eggscrambler-raft](https://github.com/arvid220u/eggscrambler-raft), run instead `git clone --recursive git@github.com/arvid220u/eggscrambler`)
 
+Then run:
+
+```
+cd eggscrambler && git submodule init && git submodule update go-libp2p-gorpc
+```
+
 For testing:
 ```
 cd anonbcast && RAFT=../raft-darwin20.2.0.so go test -v
@@ -20,6 +26,8 @@ For running the application:
 ```
 cd confessions && RAFT=../raft-darwin20.2.0.so go run confessions.go
 ```
+
+You might need to comment out lines 6 and 24 in `anonbcast/raft.go` if you don't have access to eggscrambler-raft.
 
 ## Overview
 
