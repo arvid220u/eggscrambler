@@ -27,7 +27,7 @@ For running the application:
 cd confessions && RAFT=../raft-darwin20.2.0.so go run confessions.go
 ```
 
-You might need to comment out lines 6 and 24 in `anonbcast/raft.go` if you don't have access to eggscrambler-raft.
+You might need to comment out lines 6 and 24 in `anonbcast/raft.go` if you don't have access to eggscrambler-raft. If your Go version is not the same as when we libified our Raft implementation, you may get an error `cannot load raft plugin ../raft-darwin20.2.0.so`.
 
 ## Overview
 
