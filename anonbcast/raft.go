@@ -27,11 +27,11 @@ func makeRaft(cp network.ConnectionProvider, initialConfig map[string]bool,
 		// use the libified raft!
 		p, err := plugin.Open(compiledRaft)
 		if err != nil {
-			log.Fatalf("cannot load raft plugin %v", compiledRaft)
+			log.Fatalf("cannot load raft plugin %v with error: %v", compiledRaft, err)
 		}
 		xmakef, err := p.Lookup("Make")
 		if err != nil {
-			log.Fatalf("cannot find Make in %v", compiledRaft)
+			log.Fatalf("cannot find Make in %v with error: %v", compiledRaft, err)
 		}
 		makef := xmakef.(func(network.ConnectionProvider, string, map[string]bool, *libraft.Persister, chan libraft.ApplyMsg, bool) libraft.Raft)
 		return makef(cp, me, initialConfig, persister, applyCh, sendAllLogAsInt)
